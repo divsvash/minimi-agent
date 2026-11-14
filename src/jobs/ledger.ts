@@ -168,17 +168,64 @@ export class JobLedger {
     return null;
   }
 
+  /**
+   * Acquire the Job write lock and re-validate ownership INSIDE the same
+   * transaction (ADR-010). A concurrent sweeper/reclaimer cannot interpose
+   * between our check and our writes: we hold the node's write lock from
+   * before the re-check until COMMIT. Throws FencingError on loss.
+   */
+  private async lockAndFence(
+    tx: import("neo4j-driver").ManagedTransaction,
+    jobId: string,
+    claimGeneration: number,
+    workerId: string,
+    requireLease = true,
+  ): Promise<{ attempts: number; maxAttempts: number }> {
+    // 1. write-lock the node — serializes against ALL other writers of this job
+    await tx.run(`MATCH (j:Job {id: $id}) SET j._lock = $workerId`, {
+      id: jobId,
+      workerId,
+    });
+    // 2. re-check after acquiring the lock — eligibility may have changed
+    const fence = await tx.run(
+      `MATCH (j:Job {id: $id})
+       WHERE j.status = 'running' AND j.claimGeneration = $gen
+         ${requireLease ? "AND j.leaseUntil > datetime()" : ""}
+       RETURN j.attempts AS attempts, j.maxAttempts AS maxAttempts`,
+      { id: jobId, gen: claimGeneration },
+    );
+    if (fence.records.length === 0) {
+      await tx.run(`MATCH (j:Job {id: $id}) REMOVE j._lock`, { id: jobId });
+      throw new FencingError();
+    }
+    return {
+      attempts: fence.records[0]!.get("attempts") as number,
+      maxAttempts: fence.records[0]!.get("maxAttempts") as number,
+    };
+  }
+
+  /** Remove the transient lock artifact at the end of a fenced transaction. */
+  private async unlock(tx: import("neo4j-driver").ManagedTransaction, jobId: string): Promise<void> {
+    await tx.run(`MATCH (j:Job {id: $id}) REMOVE j._lock`, { id: jobId });
+  }
+
   /** Heartbeat: extend the lease while working. Succeeds only for the current owner. */
   async renewLease(jobId: string, claimGeneration: number, workerId: string): Promise<boolean> {
     const session = newSession(this.driver, "WRITE");
     try {
-      const { summary } = await session.run(
-        `MATCH (j:Job {id: $id})
-         WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
-         SET j.leaseUntil = datetime() + duration({seconds: $leaseSeconds})`,
-        { id: jobId, gen: claimGeneration, leaseSeconds: this.cfg.leaseSeconds },
-      );
-      return (summary.counters.updates().propertiesSet ?? 0) > 0;
+      return await session.executeWrite(async (tx) => {
+        try {
+          await this.lockAndFence(tx, jobId, claimGeneration, workerId);
+        } catch {
+          return false;
+        }
+        await tx.run(
+          `MATCH (j:Job {id: $id}) SET j.leaseUntil = datetime() + duration({seconds: $leaseSeconds})`,
+          { id: jobId, leaseSeconds: this.cfg.leaseSeconds },
+        );
+        await this.unlock(tx, jobId);
+        return true;
+      });
     } finally {
       await session.close();
     }
@@ -198,14 +245,12 @@ export class JobLedger {
     const session = newSession(this.driver, "WRITE");
     try {
       return await session.executeWrite(async (tx) => {
-        const fence = await tx.run(
-          `MATCH (j:Job {id: $id})
-           WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
-           RETURN j.id AS id`,
-          { id: jobId, gen: claimGeneration },
-        );
-        if (fence.records.length === 0) throw new FencingError();
-        return write(tx);
+        await this.lockAndFence(tx, jobId, claimGeneration, workerId);
+        try {
+          return await write(tx);
+        } finally {
+          await this.unlock(tx, jobId);
+        }
       });
     } finally {
       await session.close();
@@ -230,14 +275,16 @@ export class JobLedger {
     const session = newSession(this.driver, "WRITE");
     try {
       return await session.executeWrite(async (tx) => {
-        const fence = await tx.run(
+        try {
+          await this.lockAndFence(tx, jobId, claimGeneration, workerId);
+        } catch {
+          return false; // fence lost — stale or reclaimed worker
+        }
+        await tx.run(
           `MATCH (j:Job {id: $id})
-           WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
-           SET j.status = 'completed', j.completedAt = datetime()
-           RETURN j.id AS id`,
-          { id: jobId, gen: claimGeneration },
+           SET j.status = 'completed', j.completedAt = datetime()`,
+          { id: jobId },
         );
-        if (fence.records.length === 0) return false;
         // promote provisional outputs of this generation — visible only now
         await tx.run(
           `MATCH (p:Provisional {jobId: $id, claimGeneration: $gen})
@@ -245,6 +292,7 @@ export class JobLedger {
            REMOVE node:Provisional REMOVE node._targetLabels`,
           { id: jobId, gen: claimGeneration },
         );
+        await this.unlock(tx, jobId);
         return true;
       });
     } finally {
@@ -262,25 +310,23 @@ export class JobLedger {
     const session = newSession(this.driver, "WRITE");
     try {
       return await session.executeWrite(async (tx) => {
-        const fence = await tx.run(
-          `MATCH (j:Job {id: $id})
-           WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
-           RETURN j.attempts AS attempts, j.maxAttempts AS maxAttempts`,
-          { id: jobId, gen: claimGeneration },
-        );
-        if (fence.records.length === 0) return "rejected";
-        const attempts = fence.records[0]!.get("attempts") as number;
-        const maxAttempts = fence.records[0]!.get("maxAttempts") as number;
+        let fence: { attempts: number; maxAttempts: number };
+        try {
+          fence = await this.lockAndFence(tx, jobId, claimGeneration, workerId);
+        } catch {
+          return "rejected";
+        }
+        const { attempts, maxAttempts } = fence;
         if (attempts >= maxAttempts) {
           await tx.run(
             `MATCH (j:Job {id: $id}) SET j.status='dead', j.lastError=$err, j.workerId=null, j.leaseUntil=null`,
             { id: jobId, err: error.slice(0, 2000) },
           );
-          // dead jobs never get promoted — reap their provisionals
           await tx.run(
             `MATCH (p:Provisional {jobId: $id, claimGeneration: $gen}) DETACH DELETE p`,
             { id: jobId, gen: claimGeneration },
           );
+          await this.unlock(tx, jobId);
           return "dead";
         }
         const backoffMinutes = Math.min(2 ** attempts, 60);
@@ -290,6 +336,7 @@ export class JobLedger {
                j.nextRunAt = datetime() + duration({minutes: $backoff})`,
           { id: jobId, err: error.slice(0, 2000), backoff: backoffMinutes },
         );
+        await this.unlock(tx, jobId);
         return "requeued";
       });
     } finally {
@@ -297,18 +344,55 @@ export class JobLedger {
     }
   }
 
-  /** Sweeper: requeue expired running jobs; reap invisible provisional debris. */
+  /** Sweeper: requeue expired running jobs (lock+recheck each — a concurrent
+   *  re-claim between our read and our write must not be clobbered);
+   *  reap invisible provisional debris. */
   async sweep(): Promise<{ requeued: number; provisionalsReaped: number }> {
-    const session = newSession(this.driver, "WRITE");
+    const read = newSession(this.driver, "READ");
+    let expiredIds: string[] = [];
     try {
-      return await session.executeWrite(async (tx) => {
-        const requeued = await tx.run(
-          `MATCH (j:Job {status: 'running'}) WHERE j.leaseUntil < datetime()
-           SET j.status='pending', j.workerId=null, j.leaseUntil=null,
-               j.nextRunAt=datetime(), j.lastError='lease expired (reclaimed by sweeper)'
-           RETURN count(j) AS n`,
-        );
-        const reaped = await tx.run(
+      const { records } = await read.run(
+        `MATCH (j:Job {status: 'running'}) WHERE j.leaseUntil < datetime() RETURN j.id AS id`,
+      );
+      expiredIds = records.map((r) => r.get("id") as string);
+    } finally {
+      await read.close();
+    }
+    let requeued = 0;
+    for (const id of expiredIds) {
+      const s = newSession(this.driver, "WRITE");
+      try {
+        const did = await s.executeWrite(async (tx) => {
+          // lock first, then re-check — the reclaimer of record keeps or requeues
+          await tx.run(`MATCH (j:Job {id: $id}) SET j._lock = 'sweeper'`, { id });
+          const recheck = await tx.run(
+            `MATCH (j:Job {id: $id}) WHERE j.status = 'running' AND j.leaseUntil < datetime()
+             RETURN 1 AS ok`,
+            { id },
+          );
+          if (recheck.records.length === 0) {
+            await tx.run(`MATCH (j:Job {id: $id}) REMOVE j._lock`, { id });
+            return false;
+          }
+          await tx.run(
+            `MATCH (j:Job {id: $id})
+             SET j.status='pending', j.workerId=null, j.leaseUntil=null,
+                 j.nextRunAt=datetime(), j.lastError='lease expired (reclaimed by sweeper)'
+             REMOVE j._lock`,
+            { id },
+          );
+          return true;
+        });
+        if (did) requeued += 1;
+      } finally {
+        await s.close();
+      }
+    }
+    const s2 = newSession(this.driver, "WRITE");
+    let provisionalsReaped = 0;
+    try {
+      const reaped = await s2.executeWrite((tx) =>
+        tx.run(
           `MATCH (p:Provisional)
            WHERE NOT EXISTS {
              MATCH (j:Job {status: 'running', id: p.jobId})
@@ -316,15 +400,13 @@ export class JobLedger {
            }
            DETACH DELETE p
            RETURN count(p) AS n`,
-        );
-        return {
-          requeued: requeued.records[0]?.get("n") ?? 0,
-          provisionalsReaped: reaped.records[0]?.get("n") ?? 0,
-        };
-      });
+        ),
+      );
+      provisionalsReaped = reaped.records[0]?.get("n") ?? 0;
     } finally {
-      await session.close();
+      await s2.close();
     }
+    return { requeued, provisionalsReaped };
   }
 
   async deadJobs(): Promise<Job[]> {

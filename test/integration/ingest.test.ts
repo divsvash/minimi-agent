@@ -59,6 +59,49 @@ test("verbatim day-scoped recall (2026-11-03, Europe/Lisbon) returns the turn", 
   assert.ok(records.some((r) => String(r.get("t")).includes("3 November")));
 });
 
+test("concurrent ingestions on one session — (sessionId, seq) is unique and collision-free", async () => {
+  const results = await Promise.all(
+    Array.from({ length: 8 }, (_, i) =>
+      ingestion.ingestMessage({
+        sessionId: "s-concurrent",
+        text: `turn-${i}`,
+        occurredAt: new Date(`2026-11-03T10:00:0${i}Z`),
+      }),
+    ),
+  );
+  assert.equal(results.filter((r) => r.created).length >= 1, true);
+  const s = newSession(ctx.driver, "READ");
+  const seqs = await s.run(
+    "MATCH (e:Episode {sessionId: 's-concurrent'}) RETURN e.seq AS seq ORDER BY e.seq",
+  );
+  await s.close();
+  const seen = seqs.records.map((r) => Number(r.get("seq")));
+  assert.equal(new Set(seen).size, seen.length, "seq values must be unique per session");
+});
+
+test("upstream messageId is preferred dedup key — same message, different timestamps, one episode", async () => {
+  const a = await ingestion.ingestMessage({
+    sessionId: "s4", messageId: "client-msg-001", text: "identical hello",
+    occurredAt: new Date("2026-11-03T09:00:00Z"),
+  });
+  const b = await ingestion.ingestMessage({
+    sessionId: "s4", messageId: "client-msg-001", text: "identical hello",
+    occurredAt: new Date("2026-11-03T09:00:01Z"), // different instant, same client message id
+  });
+  assert.equal(a.episodeId, b.episodeId);
+
+  // content-addressed fallback: byte-identical resend, same instant → same episode
+  const c = await ingestion.ingestMessage({
+    sessionId: "s5", text: "identical hello",
+    occurredAt: new Date("2026-11-03T09:00:00Z"),
+  });
+  const d = await ingestion.ingestMessage({
+    sessionId: "s5", text: "identical hello",
+    occurredAt: new Date("2026-11-03T09:00:00Z"),
+  });
+  assert.equal(c.episodeId, d.episodeId);
+});
+
 test("full-text index sees committed episode synchronously (no wait)", async () => {
   await ingestion.ingestMessage({
     sessionId: "s3", text: "shortlist HubSpot, Pipedrive, Salesforce, Close, Attio",

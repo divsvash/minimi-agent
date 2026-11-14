@@ -19,4 +19,10 @@ export const MIGRATIONS: { id: string; cypher: string[] }[] = [
       "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
     ],
   },
+  {
+    id: "0002_session_sequence_unique",
+    cypher: [
+      "CREATE CONSTRAINT episode_session_seq IF NOT EXISTS FOR (e:Episode) REQUIRE (e.sessionId, e.seq) IS UNIQUE",
+    ],
+  },
 ];

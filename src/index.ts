@@ -4,8 +4,11 @@ import { JobLedger } from "./jobs/ledger.js";
 import { createDriver, neo4jConfigFromEnv } from "./interfaces/neo4j.js";
 
 async function main() {
-  await migrate(); // idempotent
-  const { app, driver } = createApp();
+  // ONE shared driver for the whole process — created here, closed on shutdown.
+  const driver = createDriver(neo4jConfigFromEnv());
+  await migrate(neo4jConfigFromEnv(), driver); // idempotent
+
+  const { app } = createApp({ driver });
 
   // In-process sweeper: requeues expired running jobs, reaps invisible provisionals.
   // Fences — not the sweeper — are the correctness mechanism (ADR-010); this is hygiene.
@@ -19,7 +22,20 @@ async function main() {
   sweeper.unref();
 
   const port = Number(process.env.PORT ?? 3000);
-  app.listen(port, () => console.log(`minimi listening on :${port}`));
+  const server = app.listen(port, () => console.log(`minimi listening on :${port}`));
+
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} received — closing HTTP and driver…`);
+    clearInterval(sweeper);
+    server.close(async () => {
+      await driver.close();
+      process.exit(0);
+    });
+    // hard deadline — never hang shutdown
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 main().catch((err) => {

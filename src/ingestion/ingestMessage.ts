@@ -10,6 +10,17 @@ export interface IngestInput {
   text: string;
   role?: EpisodeRole;
   seq?: number;
+  /**
+   * Stable upstream message id (preferred dedup key — survives timestamp
+   * variance and genuinely identical repeated turns).
+   * Identity contract:
+   *   messageId   → externalId = sha256("msg|" + sessionId + "|" + messageId)
+   *   otherwise   → externalId = sha256("content|" + sessionId + "|" + role + "|" + text + "|" + occurredAtISO)
+   * Without messageId, byte-identical re-deliveries are treated as idempotent
+   * re-sends of one turn. Genuinely separate, content-identical turns in one
+   * session MUST carry a messageId.
+   */
+  messageId?: string;
   occurredAt?: Date;
   precision?: EpisodePrecision;
   tz?: string;
@@ -30,8 +41,14 @@ export class IngestionService {
   ) {}
 
   private static externalId(input: IngestInput, occurredAt: Date): string {
-    // Content-addressed identity: same session + role + text + instant ⇒ same episode.
-    return ids.sha256([input.sessionId, input.role ?? "user", input.text, occurredAt.toISOString()].join("|"));
+    // Identity contract (docs/architecture.md §3.2): upstream messageId wins;
+    // content-addressing is the deterministic fallback for idempotent redelivery.
+    if (input.messageId) {
+      return ids.sha256(["msg", input.sessionId, input.messageId].join("|"));
+    }
+    return ids.sha256(
+      ["content", input.sessionId, input.role ?? "user", input.text, occurredAt.toISOString()].join("|"),
+    );
   }
 
   /**
@@ -44,9 +61,14 @@ export class IngestionService {
     const episodeId = ids.uuid();
     const jobId = ids.uuid();
 
+    const MAX_ATTEMPTS = 5;
     const session = newSession(this.driver, "WRITE");
     try {
-      return await session.executeWrite(async (tx) => {
+      // (sessionId, seq) has a UNIQUE constraint — concurrent ingestions may
+      // contend on the same max(seq)+1; the loser retries with a fresh value.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await session.executeWrite(async (tx) => {
         // ensure user exists (single-tenant)
         await tx.run(`MERGE (u:User {id: $id}) ON CREATE SET u.createdAt = datetime(), u.timezone = $tz`, {
           id: userId,
@@ -66,12 +88,27 @@ export class IngestionService {
           return { episodeId: id, externalId, created: false, jobId: job.records[0]?.get("jobId") as string };
         }
 
+        // Sequence allocation: per-session sequencer node locked in this
+        // transaction — concurrent ingestions serialize on it, so collisions
+        // cannot occur. (sessionId, seq) UNIQUE remains as the invariant guard.
+        const seqRec = await tx.run(
+          `MERGE (g:SeqGuard {sessionId: $sessionId})
+             ON CREATE SET g.next = 0
+           SET g.next = g.next + 1
+           RETURN g.next - 1 AS seq`,
+          { sessionId: input.sessionId },
+        );
         const seq =
-          input.seq ??
-          ((await tx.run(
-            `MATCH (e:Episode {sessionId: $sessionId}) RETURN coalesce(max(e.seq), -1) + 1 AS seq`,
-            { sessionId: input.sessionId },
-          )).records[0]!.get("seq") as number);
+          input.seq ?? (seqRec.records[0]!.get("seq") as number);
+        if (input.seq !== undefined) {
+          // keep the sequencer ahead of an externally supplied sequence
+          await tx.run(
+            `MERGE (g:SeqGuard {sessionId: $sessionId})
+               ON CREATE SET g.next = $bump
+               SET g.next = CASE WHEN g.next < $bump THEN $bump ELSE g.next END`,
+            { sessionId: input.sessionId, bump: input.seq + 1 },
+          );
+        }
 
         await tx.run(
           `MATCH (u:User {id: $userId})
@@ -115,22 +152,30 @@ export class IngestionService {
         );
 
         return { episodeId, externalId, created: true, jobId };
-      });
+          });
+        } catch (err) {
+          const code = String((err as { code?: string })?.code ?? "");
+          const msg = String((err as Error)?.message ?? err);
+          const seqCollision =
+            code === "Neo.ClientError.Schema.ConstraintValidationFailed" ||
+            code === "Neo.ClientError.General.ConstraintError" ||
+            msg.includes("episode_session_seq");
+          if (!seqCollision || attempt >= MAX_ATTEMPTS) throw err;
+        }
+      }
     } finally {
       await session.close();
     }
   }
 }
 
-/** Convenience wiring shared by CLI scripts. */
-export function buildIngestion() {
-  const cfg = neo4jConfigFromEnv();
-  const driver = createDriver(cfg);
+/** Wire ingestion services onto ONE shared driver (single pool, single shutdown path). */
+export function buildIngestion(driver: import("neo4j-driver").Driver) {
   const ledger = new JobLedger(driver, {
     leaseSeconds: Number(process.env.JOB_LEASE_SECONDS ?? 120),
     sweepIntervalMs: 30_000,
   });
-  return { driver, ledger, episodes: new EpisodeStore(driver), ingestion: new IngestionService(driver, ledger) };
+  return { ledger, episodes: new EpisodeStore(driver), ingestion: new IngestionService(driver, ledger) };
 }
 
 export { migrate };

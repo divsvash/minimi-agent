@@ -1,13 +1,11 @@
 import express from "express";
 import { z } from "zod";
-import { neo4jConfigFromEnv, createDriver } from "../interfaces/neo4j.js";
-import { EpisodeStore } from "../memory/episodeStore.js";
-import { JobLedger } from "../jobs/ledger.js";
 import { buildIngestion } from "../ingestion/ingestMessage.js";
 import { dayRangeUtc } from "../core/time.js";
 import { noopTelemetry, MemoryTelemetry } from "../core/telemetry.js";
 
 const IngestSchema = z.object({
+  messageId: z.string().min(1).max(200).optional(),
   sessionId: z.string().min(1),
   text: z.string().min(1),
   role: z.enum(["user", "assistant", "system", "tool"]).default("user"),
@@ -18,12 +16,15 @@ const IngestSchema = z.object({
   source: z.enum(["chat", "api", "import"]).default("chat"),
 });
 
-export function createApp(deps?: { telemetry?: MemoryTelemetry }) {
-  const telemetry = deps?.telemetry ?? noopTelemetry;
-  const cfg = neo4jConfigFromEnv();
-  const driver = createDriver(cfg);
-  const { ingestion, ledger } = buildIngestion();
-  const episodes = new EpisodeStore(driver);
+export interface AppDeps {
+  driver: import("neo4j-driver").Driver; // ONE shared driver — created in index.ts, closed on shutdown
+  telemetry?: MemoryTelemetry;
+}
+
+export function createApp(deps: AppDeps) {
+  const telemetry = deps.telemetry ?? noopTelemetry;
+  const { driver } = deps;
+  const { ingestion, ledger, episodes } = buildIngestion(driver);
 
   const app = express();
   app.use(express.json({ limit: "256kb" }));
@@ -87,5 +88,5 @@ export function createApp(deps?: { telemetry?: MemoryTelemetry }) {
     res.json({ ok: true });
   });
 
-  return { app, driver };
+  return { app };
 }

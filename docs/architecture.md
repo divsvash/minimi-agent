@@ -2,7 +2,7 @@
 
 Minimi is a conversational agent with persistent, temporal, and relational memory. This document is the authoritative architecture reference. Decisions are recorded as ADRs in `docs/decisions/` (ADR-001 … ADR-012); each records context, decision, rejected alternatives, and consequences — not merely a restatement of this document.
 
-Status: **Approved for implementation planning.** No application code exists yet; this document and the ADRs are the only artifacts.
+Status: **Slice 1 shipped and verified** (memory spine + fenced job ledger — see §11 and README). Remaining slices are planned, not built. This document and the ADRs remain the source of truth for design.
 
 ---
 
@@ -55,7 +55,7 @@ Authoritative nodes: `User`, `Episode`, `Entity`, `Statement`, `Observation`, `E
 | property | meaning |
 |---|---|
 | `id` | uuid |
-| `externalId` | `sha256(sessionId \| seq \| normalize(text))` — **unique constraint**, idempotent ingest |
+| `externalId` | **Identity contract:** if an upstream `messageId` exists, `sha256("msg\|" + sessionId + "\|" + messageId)`; otherwise `sha256("content\|" + sessionId + "\|" + role + "\|" + text + "\|" + occurredAt)`. Upstream ids win — genuinely identical turns in one session are distinct only with a `messageId`; without one, byte-identical re-deliveries are idempotent re-sends of a single logical turn. **Unique constraint.** Separately, `(sessionId, seq)` carries a **unique constraint**; `seq` is allocated via a per-session sequencer node locked inside the ingest transaction (`:SeqGuard`), so concurrent ingestions serialize and cannot collide (guarded by `0002_session_sequence_unique`) |
 | `sessionId`, `seq`, `role` | conversation structure |
 | `text` | raw, immutable |
 | `occurredAt` + `precision` + `tz` | when the turn happened; precision ∈ `second\|minute\|day\|month\|year\|unknown` |
@@ -265,7 +265,7 @@ Exactly one verdict per run: first matching rung. `dimension_mismatch` remains a
 
 Evaluation harness and fixture registry are introduced in **Slice 2** and extended in every later slice; Slice 10 is comprehensive evaluation only (ADR-012). Each slice lists components / contracts / dependencies / acceptance tests / usable-at-completion.
 
-**Slice 1 — Skeleton & memory spine.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (fenced claim / fenced output commit / fenced completion / provisional promotion / sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; **claim-race integration tests against the pinned Neo4j version green (N competing claimers → one winner; stale-generation completion rejected; stale output writes commit zero nodes; superseded-generation provisional outputs never visible)**; FT read immediately after write passes. Usable: verbatim recall + raw capture.
+**Slice 1 — Skeleton & memory spine.** **Status: shipped & verified.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (fenced claim / fenced output commit / fenced completion / provisional promotion / sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; **claim-race integration tests against the pinned Neo4j version green (N competing claimers → one winner; stale-generation completion rejected; stale output writes commit zero nodes; superseded-generation provisional outputs never visible)**; FT read immediately after write passes. Usable: verbatim recall + raw capture.
 
 **Slice 2 — Contracts, fakes & eval scaffold.** Components: zod schemas (Episode/Statement/Entity/Observation/Evidence/Capture), provider interfaces + in-memory fakes, clock/id injection, error taxonomy, telemetry counters, `eval/` runner + matcher DSL + fixture registry + deterministic mode. Contracts: all data contracts (code twins). Accept: offline `npm test`; runner fails on regression (negative control); fixture-drift hash check; `npm run eval` skeleton exits 0. Usable: nothing user-facing — everything later is testable offline.
 

@@ -6,8 +6,9 @@ import { MIGRATIONS } from "./migrations.js";
  * Schema statements run as autocommit (never mixed with writes in one tx —
  * Neo4j forbids combining schema modification with writes in a single transaction).
  */
-export async function migrate(driverConfig = neo4jConfigFromEnv()): Promise<string[]> {
-  const driver = createDriver(driverConfig);
+export async function migrate(driverConfig = neo4jConfigFromEnv(), existingDriver?: import("neo4j-driver").Driver): Promise<string[]> {
+  const driver = existingDriver ?? createDriver(driverConfig);
+  const ownDriver = existingDriver === undefined;
   const applied: string[] = [];
   try {
     const s0 = newSession(driver, "WRITE");
@@ -44,7 +45,7 @@ export async function migrate(driverConfig = neo4jConfigFromEnv()): Promise<stri
       applied.push(migration.id);
     }
   } finally {
-    await driver.close();
+    if (ownDriver) await driver.close();
   }
   return applied;
 }

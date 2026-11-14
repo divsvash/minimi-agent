@@ -147,6 +147,48 @@ test("provisional outputs invisible until promotion; swept when generation is su
   assert.equal(await ledger.complete(jobId2, jobB!.claimGeneration, "wB"), true);
 });
 
+test("concurrent: stale output writer racing the reclaim path — stale side never lands an output", async () => {
+  for (let trial = 0; trial < 25; trial++) {
+    const jobId = await ledger.enqueue("noop", { trial }, `race-out:${trial}`);
+    const s1 = newSession(ctx.driver, "WRITE");
+    await s1.run("MATCH (j:Job {id:$id}) SET j.leaseUntil = datetime() + duration({seconds: 2})", { id: jobId });
+    await s1.close();
+    const j1 = await ledger.claimNext("w1");
+    const gen1 = j1!.claimGeneration;
+
+    // lease expires right now; reclaimer and stale writer race
+    await forceExpire(jobId);
+    const [claimResult, staleWrite, staleComplete] = await Promise.all([
+      ledger.sweep().then(() => ledger.claimNext("w2")),
+      ledger.commitFencedOutput(jobId, gen1, "w1", (tx) =>
+        tx.run("CREATE (o:JobOutput {jobId: $jobId, claimGeneration: $gen, marker: 'stale'}) RETURN o", {
+          jobId,
+          gen: gen1,
+        }),
+      ).then(
+        () => "committed",
+        () => "rejected",
+      ),
+      ledger.complete(jobId, gen1, "w1"),
+    ]);
+
+    assert.equal(staleWrite, "rejected", `trial ${trial}: stale output commit must be fenced out`);
+    assert.equal(staleComplete, false, `trial ${trial}: stale completion must be fenced out`);
+    assert.ok(claimResult, `trial ${trial}: reclaimer must own the job`);
+    assert.ok(claimResult!.claimGeneration > gen1);
+
+    // the stale marker never exists in the store
+    assert.equal(
+      await countWhere("MATCH (o:JobOutput {jobId: $id, claimGeneration: $gen}) RETURN count(o) AS n", {
+        id: jobId,
+        gen: gen1,
+      }),
+      0,
+      `trial ${trial}: no stale output may exist after the race`,
+    );
+  }
+});
+
 test("duplicate enqueue is a no-op returning the same job id", async () => {
   const a = await ledger.enqueue("extract", { x: 1 }, "dup:1");
   const b = await ledger.enqueue("extract", { x: 1 }, "dup:1");
