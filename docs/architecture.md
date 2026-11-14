@@ -93,7 +93,7 @@ Subject–predicate–object is carried by `SUBJECT`/`OBJECT` relationships to E
 
 Supersession of changed external reality is expressed as **`(:Observation)-[:SUPERSEDED_BY]->(:Observation)`** (relationship + properties `detectedAt`, `researchRunId`, `reason`), **never by mutating the old node**. “Current” = not superseded. “History” = chain traversal.
 
-**Supersession is same-lineage only** (`sourceKey` = canonical host + publisher lineage): a disagreeing observation from an independent source never supersedes a prior one — both stand, joined by `CONFLICTS_WITH`, synthesis presents both (ADR-005).
+**Supersession is same-lineage only, and never by recency alone** (ADR-005): lineage = explicit `sourceId` — resolved by configured source identity first, then publisher identity, then canonical host, then explicitly declared source family; URL movement does not break lineage. A newer capture supersedes an existing observation only when it is a *genuine replacement* — successor `sourceEffectiveAt` ≥ superseded one’s (or explicit withdrawal/deprecation) **and** the extracted value differs in the comparable dimension set. Same value + newer date ⇒ new Capture on the existing Observation, not supersession. Disagreeing sources in different lineages are never superseded; both stand (`CONFLICTS_WITH`). Effective-period-separated observations in one lineage are complementary, not superseding.
 
 **Capture** (`:Capture`) — one per fetch attempt, always:
 `id`, `fetchedAt`, `sourceUrl` (canonicalized), `outcome` (`ok|http_error|timeout|parse_error|blocked`), `httpStatus?`, `errorKind?`, `bodyHash?` (only when `outcome='ok'`), `extractedFieldHashes?`, `jobId`. Fetches of unchanged pages create new Captures referencing the *same* Observation via `(:Capture)-[:OBSERVED]->(:Observation)` — two fetches, two Captures, one deduplicated Observation. **Failed fetches produce a Capture with no `OBSERVED` relationship** and feed `ResearchRun` coverage accounting; they are never silently dropped. Captures are the proof of what we saw (or failed to see) even if a page later changes, and the replay input for eval.
@@ -168,8 +168,16 @@ Full-text and graph legs are synchronous with commits (§8). Vector leg may lag;
 ### 6.1 Pipeline
 ```
 ResearchRun accounting (mandatory, attached to every verdict): { id, entity, attribute, dims, queries[], startedAt, completedAt,
-  relevantSourceFound, sourceAccessible, attributeExtracted, dimensionsMatchedBaseline,
-  sourceAuthoritative, sourceFreshEnough, conflictingSourcesFound, coverageNotes } — see ADR-009 for the gating rules per verdict.
+  attempts[]: [{query?, url?, sourceId, outcome, relevant, accessible, attrExtracted,
+                dimsComparable?, value?, sourceEffectiveAt?, sourcePublishedAt?,
+                authoritative, fresh, conflictWith?}],   // per-attempt records are authoritative;
+  // aggregate flags derived from attempts[] (ADR-009). Exactly one verdict per run, precedence-ordered:
+  // (1) insufficient_evidence  (entity unresolved OR zero outcome='ok' attempts)
+  // (2) changed                (comparable + differs; authoritative ∧ fresh; conflicts shown)
+  // (3) verified_unchanged     (comparable + equal; authoritative ∧ fresh; no unresolved conflict)
+  // (4) no_change_found        (partial base; mandatory reason: stale_source | source_not_authoritative |
+  //                              dimension_mismatch | attribute_not_extracted | no_relevant_source | conflicting_unresolved)
+}
 1. Discover   — query generation from {entity alias set} × {attribute templates}; SearchProvider interface
                 (Tavily/Brave/…; fixture-recorded for eval); ranked source list; failures logged on the run
 2. Fetch      — HTML→readable text (or vendor JSON API where offered); bodyHash computed; raw snapshot
@@ -193,14 +201,14 @@ One engine; domains are `{attribute vocabulary + extraction schema + normalizati
 `COMPARABLE_TO` is at best a TTL’d cache of this computation, invalidated on obsNormVersion or normalization-table bump; never authoritative, never read for truth.
 
 ### 6.4 Verdict (what research established — exactly four)
-| verdict | meaning | required evidence (from ResearchRun) |
+| verdict | meaning | precedence & evidence (from per-attempt `attempts[]`) |
 |---|---|---|
-| `changed` | current observation; comparable; normalized values differ | relevantSourceFound ∧ sourceAccessible ∧ attributeExtracted ∧ sourceAuthoritative ∧ sourceFreshEnough + `comparable`; conflicts rendered, never averaged |
-| `verified_unchanged` | comparable; values equal | same gates **all true**, no unresolved conflict — a stale page can never produce this verdict |
-| `no_change_found` | research ran; at least one coverage gate failed (nothing relevant / inaccessible / unextractable / dimension mismatch) | failing flags listed in the answer; dimension mismatch reported as ComparisonOutcome, values shown side-by-side |
-| `insufficient_evidence` | nothing usable at all | `coverageStatus: failed`; attempted queries and failed URLs listed verbatim |
+| `insufficient_evidence` | evidence base cannot be established at all | rung 1: entity unresolvable, or **zero** `outcome='ok'` attempts. Failing attempts listed verbatim. |
+| `changed` | comparable, values differ | rung 2: current observation, `comparable`, `authoritative ∧ fresh`; conflicts rendered both-side, never averaged |
+| `verified_unchanged` | comparable, equal values | rung 3: same gates as `changed`, no unresolved conflict. Stale page ⇒ falls through to rung 4 |
+| `no_change_found` | partial base, current comparable value unestablishable | rung 4: mandatory `reason` — `stale_source` / `source_not_authoritative` / `dimension_mismatch` / `attribute_not_extracted` / `no_relevant_source` / `conflicting_unresolved` |
 
-**A missing search result is never proof of no change** (ADR-009). Every verdict carries its ResearchRun; synthesis renders the failing coverage flags verbatim. Works identically for pricing (dimension-keyed) and releases/versions (semver ordering + `sourceEffectiveAt`; per-attribute freshness policy table).
+Exactly one verdict per run: first matching rung. `dimension_mismatch` remains a ComparisonOutcome, never evidence of change or stasis. Absence of results never proves absence of change (ADR-009). Freshness derives from source-declared dates, never fetch time.
 
 ## 7. Entity resolution (candidate generation ≠ authorization)
 
@@ -223,7 +231,7 @@ One engine; domains are `{attribute vocabulary + extraction schema + normalizati
 
 **States:** `pending → running → completed | dead`; lease-expired `running` returns to `pending` via the sweeper. Fields: `workerId`, `leaseUntil`, `attempts`, `maxAttempts`, `claimGeneration` (monotonic fencing token), `lastError`, `payloadJson`.
 
-**Fenced claim protocol** (full spec and rationale in ADR-010): per claim, in one write transaction — (1) read one candidate; (2) acquire a **write lock on that node** (`SET j._lock = $workerId`); (3) **re-check eligibility after lock acquisition** (`status='pending' AND nextRunAt <= now()`, else start over); (4) claim + `claimGeneration = coalesce(claimGeneration,0)+1` and commit atomically. Completion requires `status='running' AND claimGeneration = $gen` — a worker that lost its lease and finishes late (even with a recycled `workerId`) matches zero rows and is discarded. **This spacing matters: workerId-only checks do not protect a reclaimed job from its original late writer.** How this behaves is pinned by an integration test racing N claimers against the dockerized pinned Neo4j version in CI — unit tests alone are insufficient.
+**Fenced claim protocol** (full spec in ADR-010): per claim, in one write transaction — (1) read one candidate; (2) acquire a **write lock on that node**; (3) **re-check eligibility after lock acquisition** (else start over); (4) claim + `claimGeneration` fencing token, commit atomically. **`leaseUntil > now()` is conjunctive for every ownership operation — an expired lease revokes ownership immediately, regardless of the sweeper.** Fenced completion checks both generation and lease. **All durable job outputs commit only inside the same transaction that re-validates `status='running' AND claimGeneration=$gen AND leaseUntil > datetime()`** — outputs carry `(jobId, claimGeneration)`; a stale worker’s write transaction aborts and commits nothing. Effects that cannot share the store transaction use **generation-scoped provisional output + fenced promotion** (invisible until promoted; reaped on fence failure). Idempotency keys supplement fencing; they do not replace it. CI integration tests race N claimers against the pinned Neo4j version, including stale output writes and provisional invisibility (ADR-010).
 
 **Lease & stale recovery:** workers heartbeat `leaseUntil`; a sweeper returns expired `running` jobs to `pending` (generation preserved; re-claim bumps it). Completion is idempotent by output keys; handlers are re-runnable. Episode + outbox Job are created in one transaction (no torn writes); the replay scanner is a reconciliation tool for legacy/partial data, never the crash-recovery path.
 
@@ -257,7 +265,7 @@ One engine; domains are `{attribute vocabulary + extraction schema + normalizati
 
 Evaluation harness and fixture registry are introduced in **Slice 2** and extended in every later slice; Slice 10 is comprehensive evaluation only (ADR-012). Each slice lists components / contracts / dependencies / acceptance tests / usable-at-completion.
 
-**Slice 1 — Skeleton & memory spine.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (claim/complete/sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; **claim-race integration tests against the pinned Neo4j version green (N competing claimers, one winner per job; stale-generation completion rejected)**; FT read immediately after write passes. Usable: verbatim recall + raw capture.
+**Slice 1 — Skeleton & memory spine.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (fenced claim / fenced output commit / fenced completion / provisional promotion / sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; **claim-race integration tests against the pinned Neo4j version green (N competing claimers → one winner; stale-generation completion rejected; stale output writes commit zero nodes; superseded-generation provisional outputs never visible)**; FT read immediately after write passes. Usable: verbatim recall + raw capture.
 
 **Slice 2 — Contracts, fakes & eval scaffold.** Components: zod schemas (Episode/Statement/Entity/Observation/Evidence/Capture), provider interfaces + in-memory fakes, clock/id injection, error taxonomy, telemetry counters, `eval/` runner + matcher DSL + fixture registry + deterministic mode. Contracts: all data contracts (code twins). Accept: offline `npm test`; runner fails on regression (negative control); fixture-drift hash check; `npm run eval` skeleton exits 0. Usable: nothing user-facing — everything later is testable offline.
 

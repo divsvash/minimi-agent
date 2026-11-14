@@ -7,11 +7,13 @@ Observations are immutable measurements from external sources; Captures record e
 
 ## Decision
 
-### Cross-source disagreement (no cross-source supersession)
-- Observations dedup **within a source lineage**, never across sources. Source lineage key: `sourceKey = f(canonical_host, publisher)` recorded on the observation.
-- `SUPERSEDED_BY` may connect observations **from the same lineage only** (same vendor/page family, e.g., `stripe.com` pricing page re-fetched). A later-captured disagreeing observation from another lineage (`blog.example.com` vs `vendor.com`, or two mirror sites) **never supersedes** — both stand, linked by `CONFLICTS_WITH`, with full capture provenance, and synthesis must present both (publisher, access date) without choosing.
-- Extraction-source conflicts are a research outcome flag (`conflictingSourcesFound=true` on ResearchRun, ADR-009), not a resolution mechanism.
-- "Latest wins" is never a rule. "Same source, newer observedAt" is the *only* supersession that exists.
+### Cross-source disagreement and supersession (source identity is explicit)
+- **Source identity (`sourceId`)** is not inferred from the URL at fetch time. Resolution order: (1) **manually configured source identity** in config (e.g., `sourceId: "stripe-pricing-page"` pinned to the vendor pricing page) — wins when present; (2) **publisher identity** (the authoritative publisher/organization for the document, e.g., from schema.org/OG metadata or domain ownership); (3) **canonical host** (the canonicalized host, e.g., `stripe.com`) as the fallback lineage key; (4) **source family** (a configured family grouping, e.g., `pricing-aggregator`) only when the family is explicitly declared — never guessed.
+- **URL movement is expected**: vendors move pages, restructure DOM, rename paths. Observations bind to `sourceId`, not to a canonical URL; a capture at a *new* URL for the same configured `sourceId` refines the same lineage. Canonical-URL is still recorded per capture (and used for dedup within a fetch), but it is not the identity of the observation.
+- **Same-lineage supersession requires genuine replacement, not recency.** A newer Capture never by itself supersedes an Observation. Supersession `(:Observation)-[:SUPERSEDED_BY]->(:Observation)` within one `sourceId` lineage requires: the candidate successor's `sourceEffectiveAt` ≥ the superseded observation's `sourceEffectiveAt` (or the source explicitly declares supersession of the prior value), **and** the extracted value differs in the comparable dimension set (or the source explicitly states withdrawal/deprecation). Same value with newer effective date ⇒ no supersession; a new Capture attaches to the existing Observation. A restructured page yielding equal values is *confirmation*, not replacement.
+- **Cross-lineage:** independent sources **never supersede each other**, regardless of recency — both stand, `CONFLICTS_WITH` links them, synthesis presents both. There is no "newer page forgives older page" rule across lineages either.
+- A change in page structure with a *different* historical effective period (e.g., new page documents prices effective 2026-12 vs our stored 2026-07) produces a **new observation in the same lineage that is complementary, not superseding** — historical prices for non-overlapping effective periods are both retained; they are distinguished by `sourceEffectiveAt`, and comparison uses exact-period matching (§ ADR-009 ladder, dimension/effective-period gates), not "latest wins."
+- Conflicts within a lineage (source contradicts its own earlier effective assertion without declaring supersession) are surfaced, never auto-resolved.
 
 ### Failed fetches are evidence too
 - Every fetch attempt — including failures — writes a `:Capture { id, fetchedAt, sourceUrl, httpStatus, errorKind?, bodyHash?, extractedFieldHashes?, jobId, outcome: 'ok'|'http_error'|'timeout'|'parse_error'|'blocked' }`.
@@ -25,7 +27,7 @@ Observations are immutable measurements from external sources; Captures record e
 
 ## Rejected alternatives
 - **Latest-capture-wins across sources:** silent source substitution; reviewer's exact failure case; rejected.
-- **Lineage-blind supersession:** same bug, slower; rejected via `sourceKey` restriction.
+- **Lineage-blind supersession:** same bug, slower; rejected via explicit `sourceId` lineage resolution.
 - **Failed fetches unrecorded ("we just found nothing"):** destroys the coverage accounting that ADR-009 verdicts depend on; rejected — failed Captures are mandatory.
 - **Source-quality scoring to auto-resolve conflicts:** manufactures certainty; surfaced conflicts are more honest and are the challenge's provenance requirement; rejected.
 - **Capture without outcome enum (free-text errors):** breaks automated coverage accounting and eval assertions; rejected.

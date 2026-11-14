@@ -1,45 +1,53 @@
-# ADR-009: Research verdicts and explicit research coverage — no change is never assumed
+# ADR-009: Research verdicts — a disjoint ladder with per-attempt coverage
 
-**Status:** Accepted (refined — verdicts now gated on a structured coverage record)
+**Status:** Accepted (supersedes the overlapping four-verdict definitions)
 
 ## Context
-The prior draft's `no_change_found` lumped together page redesigns, login walls, extraction failures, and dimension mismatches. These are not equivalent outcomes and must not share a label. Additionally, `verified_unchanged` must not be reachable from stale or weak sources.
+The prior definitions overlapped: `no_change_found` absorbed inaccessible sources, failed extraction, and absent results — the same failure modes as `insufficient_evidence`. Absence of search results was simultaneously declared `insufficient_evidence` and included in `no_change_found`. Two verdicts could describe the same run, which destroys auditability and makes synthesis wording arbitrary. This ADR defines a **precedence ladder**: exactly one verdict per ResearchRun, chosen by first match, plus **per-source-attempt coverage records** so one successful source cannot conceal several failed ones.
 
 ## Decision
 
-### ResearchRun coverage record (mandatory, stored, attached to every verdict)
-Every research run writes a `:ResearchRun { id, entity, attribute, dims, queries[], startedAt, completedAt,
-  relevantSourceFound: bool,      // ≥1 candidate judged relevant to the attribute+dimensions
-  sourceAccessible: bool,         // fetched with a usable response (not 4xx/login-wall/timeout)
-  attributeExtracted: bool,       // schema-valid extraction of the attribute succeeded
-  dimensionsMatchedBaseline: bool,// extracted dims comparable to historical baseline (else mismatch reported separately)
-  sourceAuthoritative: bool,      // domain/publisher allowlist or explicit verification flag
-  sourceFreshEnough: bool,        // attribute-specific freshness policy (pricing ≤ N days; release notes ≤ M days)
-  conflictingSourcesFound: bool,  // same dims, different values across independent sources
-  coverageNotes: string }`.
-Missing flags are recorded as reasons; the record is part of the answer's evidence.
+### ResearchRun coverage — per attempt, not aggregate
+Every search query and every fetch attempt is recorded individually:
+`attempts[]: { query?, url?, sourceId, outcome: 'ok'|'http_error'|'timeout'|'blocked'|'parse_error',
+  relevant: bool, accessible: bool, attrExtracted: bool, dimsComparable: bool?, value?, sourceEffectiveAt?,
+  sourcePublishedAt?, authoritative: bool, fresh: bool, conflictWith?: string (obsId) }`.
+Aggregate flags (`relevantSourceFound`, `sourceAccessible`, …) are **derived** from `attempts[]` for query convenience only; the attempts are authoritative. A run with one successful source and five failures knows about all six.
 
-### ComparisonOutcome (still separate — never a verdict)
-`comparable | dimension_mismatch{mismatchedKeys[]} | normalization_mismatch{versions}` — computed before verdicts; mismatches never become "nothing changed".
+### ComparisonOutcome (unchanged — still not a verdict)
+`comparable | dimension_mismatch{mismatchedKeys[]} | normalization_mismatch{versions}`.
 
-### The four verdicts — now precisely gated
-- `changed`: `relevantSourceFound ∧ sourceAccessible ∧ attributeExtracted ∧ sourceAuthoritative ∧ sourceFreshEnough`, `comparable`, normalized values differ. (Conflicts → both observations kept, verdict still `changed` but rendered with both sides; never averaged.)
-- `verified_unchanged`: same gates **all true**, `comparable`, values equal, `sourceFreshEnough`, and **no unresolved conflict**. A stale page (fetch succeeded but publication/effective date older than policy) can never produce this verdict.
-- `no_change_found`: research executed; **at least one of** `relevantSourceFound=false` (searched, nothing relevant), `sourceAccessible=false` (all relevant sources blocked), `attributeExtracted=false`, or `dimensionsMatchedBaseline=false` (mismatch reported as `ComparisonOutcome`, values shown side-by-side, not differenced) — with the failing flags listed in the answer.
-- `insufficient_evidence`: nothing usable at all — all candidate sources inaccessible **or** extraction impossible **or** entity unresolvable; `coverageStatus=failed`; queries listed verbatim.
+### The four verdicts — non-overlapping, precedence-ordered (first match wins)
+Given a ResearchRun and its baseline, evaluate in order:
 
-### Honesty rules (unchanged, now enforced via the coverage record)
-Absence of search results ⇒ `insufficient_evidence`. Unusable source ⇒ `no_change_found` with reason. Stale source ⇒ never `verified_unchanged`. Dimension mismatch ⇒ `ComparisonOutcome`, reported, never a change or no-change verdict. Every verdict renders its ResearchRun; synthesis must name the failing coverage flags, not paraphrase them away.
+1. **`insufficient_evidence`** — the evidence base could not be established at all:
+   - `entity_resolution_failed` (subject entity unresolvable), or
+   - **every** recorded attempt failed (zero `outcome='ok'` attempts — including "search returned zero candidates and fetched nothing").
+   The failing attempts are listed verbatim.
+2. **`changed`** — at least one accessible, relevant, extractable source exists; at least one current observation was extracted; it is `comparable` to the baseline; normalized values differ. Requires `authoritative ∧ fresh` (per-attribute freshness policy). Conflicting independent sources are kept and rendered (both publishers, both captures) — the verdict stands, never averaged.
+3. **`verified_unchanged`** — same preconditions as (2) with values equal, `authoritative ∧ fresh`, and **no unresolved conflict**. A stale page yields no verdict from this rung — fall through.
+4. **`no_change_found`** — the run completed with a partial evidence base (at least one `outcome='ok'` attempt) but could not establish a current, comparable value. `reason` is **mandatory and specific**:
+   - `stale_source` — observation extracted, but `sourceFreshEnough=false` (source-declared date older than policy; fetch time is never freshness);
+   - `source_not_authoritative` — usable page, authority gate failed;
+   - `dimension_mismatch` — extracted dims don't match baseline; values shown side-by-side, never differenced (ComparisonOutcome carried separately);
+   - `attribute_not_extracted` — accessible, relevant source; schema extraction failed;
+   - `no_relevant_source` — pages fetched successfully, none relevant to the attribute/dimensions;
+   - `conflicting_unresolved` — comparable claims from independent sources disagree and none can be preferred; both shown.
 
-Identical gating for pricing and product releases (freshness windows differ per attribute; policy table in config, versioned).
+Each verdict carries its ResearchRun id; synthesis must name the exact rung and reason (e.g., "could not confirm: stale page (published 2025-08-01, policy ≤ 30 days)").
+
+### Rules
+Absence of results never proves absence of change. `dimension_mismatch` is never evidence of "no change." Freshness is computed from source-declared dates, never from fetch time. `sourceFreshEnough` and `sourceAuthoritative` gate rungs 2–3 only. One ResearchRun ⇒ exactly one verdict (first matching rung).
+
+Applies identically to pricing and releases/versions (freshness windows differ per attribute; policy table versioned in config).
 
 ## Rejected alternatives
-- **Single `no_change_found` bucket (prior draft):** erases the difference between "we looked and found nothing relevant" and "the vendor hid the page" and "it's a different plan's price"; destroys auditability; rejected — coverage record replaces it.
-- **Verdict from stale page via recency-of-fetch:** conflates "we read it" with "it's current"; rejected — `sourceFreshEnough` is computed from source-declared dates, not fetch time.
-- **Conflict resolution by source rank to force `verified_unchanged`:** manufactures consensus; conflicts are surfaced with publishers and dates; rejected.
-- **ComparisonOutcome folded into the verdict enum:** mismatch is about comparability, not research outcome — kept separate (unchanged from prior decision).
+- **Overlapping definitions (prior draft):** same run satisfiable by two verdicts; rejected — precedence ladder resolves.
+- **Aggregate-only coverage booleans:** one green source launders five failures; rejected — per-attempt records are authoritative.
+- **`stale_source` as `insufficient_evidence`:** conflates "nothing usable" with "something usable but not current" — different epistemic status, different remediation; rejected.
+- **Dimension mismatch counted toward "no change" evidence-wise:** repeating ADR-009's core rule — mismatch says "not comparable," never "unchanged," and is excluded from no_change_found's *evidence* claim (it is one of its enumerated *reasons*, presented as such).
 
 ## Consequences
-- Verdicts are now mechanically checkable against the coverage record — eval asserts the gating function directly (unit) in addition to end-to-end fixture verdicts.
-- More answers terminate at `no_change_found`/`insufficient_evidence` — intended; the UI shows exactly what failed and what would resolve it.
-- Freshness policy is per-attribute configuration with a versioned table; policy changes bump the record schema version and are logged.
+- Verdict gating is now a pure function of `attempts[]` — unit-testable in isolation; golden cases assert the ladder directly.
+- ResearchRun storage grows with attempt records; acceptable, hashes and small flags only.
+- UI/synthesis gains a reason taxonomy to render (`reason` enum) — small cost, large trust payoff.

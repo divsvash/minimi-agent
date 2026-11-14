@@ -19,20 +19,29 @@ A `:Job` node in Neo4j is the ledger; atomicity is established by lock acquisiti
 3. **Re-check eligibility after lock acquisition:** `MATCH (j:Job {id: $id}) WHERE j.status='pending' AND j.nextRunAt <= datetime()` — if the node changed hands while we waited, this returns zero rows and we retry from step 1. **This re-check, after the lock, is the correctness hinge.**
 4. **Claim and commit atomically:** in the same transaction as steps 2–3, `SET j.status='running', j.workerId=$workerId, j.leaseUntil=datetime()+duration(…), j.attempts=j.attempts+1, j.claimGeneration=coalesce(j.claimGeneration,0)+1, j._lock=null REMOVE j._lock RETURN j`.
 
+**Lease semantics — expiry revokes ownership immediately.** `leaseUntil > datetime()` is a conjunctive condition for **all** ownership operations, alongside `claimGeneration`. A worker whose lease expired owns nothing — even before the sweeper runs. There is no grace period and no dependence on the sweeper for correctness (the sweeper only requeues; the fences do the rejecting).
+
+**Fenced output writes (the completion check alone is insufficient):**
+**Every durable job output — statements, observations, evidence, child jobs, any side effect persisted to the store — must be committed only in the same transaction that re-validates `status='running' AND claimGeneration=$gen AND leaseUntil > datetime()`.** Outputs carry `(jobId, claimGeneration)`; the fence check and the output commit happen atomically. A stale worker's output transaction fails the re-validation and commits nothing.
+
+For multi-step or externally-visible effects that cannot share the store transaction (downstream APIs, long fetch loops), use the **provisional pattern**: write generation-scoped provisional output (invisible — either `(:Provisional {jobId, claimGeneration})`-tagged or filtered by a `provisional` flag from all queries and downstream jobs), then **promote** it in the fenced completion transaction. If promotion's fence fails, the provisionals are garbage-collected as invisible debris — they were never readable, never actioned.
+
+Idempotency keys on outputs are **necessary but not sufficient**: they prevent duplicates, not obsolete writes. Both mechanisms coexist — idempotency absorbs retries, fencing rejects staleness.
+
 **Fenced completion (fencing-token check, not workerId alone):**
 ```cypher
-MATCH (j:Job {id: $id}) WHERE j.status='running' AND j.claimGeneration = $gen
+MATCH (j:Job {id: $id}) WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
 SET j.status='completed', j.completedAt=datetime()
 ```
-A worker that lost its lease, was reclaimed, and finishes late holds an old `claimGeneration`; its completion matches zero rows and is discarded — even if `workerId` was reused, the generation is not. All handler outputs carry the job id + generation and are written idempotently, so discarded late work is harmless re-execution, never corruption.
+A late or lease-expired worker's completion matches zero rows and is discarded — even with a recycled `workerId`, its generation is stale. All handlers are idempotent by output keys, so any rejected attempt is harmless re-execution, never corruption.
 
-**Stale-job recovery:** sweeper returns `running` jobs with `leaseUntil < now()` to `pending` (generation preserved — the re-claim increments it, invalidating any late original worker).
+**Stale-job recovery:** sweeper requeues expired `running` jobs (`leaseUntil < now()` → `pending`); generation preserved at requeue, bumped on the next claim — invalidating any late original worker for both completion and output writes.
 
 **Idempotent enqueue:** `MERGE … ON CREATE SET …` on `idempotencyKey` (unique constraint); duplicates return the existing job.
 
 **Episode + outbox atomicity:** the `Episode` and its initial `extract` `:Job` (+ `PENDING_EXTRACTION` edge) are created in **one transaction**. No torn two-write window exists. The replay scanner is a **reconciliation** tool for legacy/partial/hand-repaired data — not the crash-recovery path.
 
-**Integration testing requirement (not optional):** an integration test suite runs N competing claim transactions against the **pinned Neo4j version** (docker compose service used by CI), asserting: exactly one winner per job across races; loser retries and claims nothing already running; a crashed-and-reclaimed job completed by the original worker is rejected via generation mismatch; a late completion by a stale worker is rejected even when workerId is recycled; sweeper resurrects expired jobs with a bumped generation. Unit tests of the claim function are necessary but never sufficient.
+**Integration testing requirement (not optional):** an integration test suite runs N competing transactions against the **pinned Neo4j version** (docker compose service used by CI), asserting: exactly one winner per job across races; loser re-check yields zero rows and claims nothing already running; a crashed-and-reclaimed job completed by the original worker is rejected via generation mismatch; a late completion by a stale worker is rejected even when workerId is recycled; **stale output writes rejected** — an expired-lease (or superseded-generation) worker attempting to commit outputs in a transaction racing the reclaim commits zero output nodes; **provisional outputs written by a superseded worker never become visible** (no query, no downstream job sees them; sweeper reaps them); sweeper resurrects expired jobs with a bumped generation; handler re-execution after rejection leaves the store identical to a single clean execution. Unit tests of the claim function are necessary but never sufficient.
 
 **Retries:** backoff, `maxAttempts=5` → `dead`, visible via `GET /jobs/dead` + UI banner.
 
@@ -42,8 +51,9 @@ A worker that lost its lease, was reclaimed, and finishes late holds an old `cla
 - **APOC-based advisory locking:** introduces an optional-dependency failure surface without adding a guarantee the lock+recheck+commit pattern already provides; rejected (APOC remains for other uses only).
 - **Redis/BullMQ, SQLite outbox, fire-and-forget:** as before — rejected (second store / silent loss).
 - **Replay scanner as primary recovery:** rejected; it is reconciliation only.
+- **Idempotency keys alone for output safety:** prevents duplicates, not obsolete writes — a stale worker re-executing would commit stale results under fresh-looking keys; rejected — outputs commit only inside the fence-checking transaction (or provisional + fenced promotion).
 
 ## Consequences
 - Claim is two statements in one transaction — marginally more code than the naive version, the price of an explicit guarantee.
-- `claimGeneration` must be stored, indexed not required, and propagated to every handler's completion call; missed propagation = silent fence bypass, so it is enforced by the job runner abstraction, not per-handler discipline.
+- `claimGeneration` must be stored and propagated into every handler's **output transactions**, not just completion; missed propagation = silent fence bypass (a stale output commits), so the job runner wraps handlers in the fence-checked commit — per-handler discipline is not trusted.
 - The pinned Neo4j version + CI integration gate make the concurrency contract a build-enforced property, not documentation.
