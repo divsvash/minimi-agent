@@ -1,30 +1,49 @@
-# ADR-010: Job ledger in Neo4j; transaction-claimed; Episode+Job written atomically
+# ADR-010: Job ledger in Neo4j; fenced, transaction-claimed jobs; Episode+Job written atomically
 
-**Status:** Accepted
+**Status:** Accepted (supersedes earlier claim-protocol description)
 
 ## Context
-Ingestion, embeddings, research refreshes, and index rebuilds must survive process crashes without losing raw conversation data, without double-execution, and without a broker or a second operational store. The pipeline spans potentially minutes (fetch+extract) and runs in-process alongside the API.
+Ingestion, embeddings, research refreshes, and index rebuilds must survive crashes without losing raw conversation data, without double-execution, and without a broker. The naive claim pattern (`MATCH … WHERE status='pending' … SET status='running'` in one transaction) is **not** a safe single-winner guarantee under Neo4j's default read-committed isolation: two transactions can both read the same pending candidate before either writes; the loser may silently update a row the winner already claimed. This ADR defines the actual protocol.
 
 ## Decision
-A `:Job` node in Neo4j is the system of record for background work — no Redis/BullMQ/SQS, no separate worker service, no polling external queues.
 
-- **Transactional claim:** single `MATCH … WHERE status='pending' AND nextRunAt <= datetime() … SET status='running', workerId, leaseUntil, attempts=attempts+1 RETURN j` inside one write transaction. The transaction that flips `status` owns the job; racers re-match and see zero rows (or observe `running`) and move on. Guaranteed-single-winner without advisory locks or `CALL … claim` magic.
-- **Lease & stale recovery:** workers heartbeat `leaseUntil` during long jobs; a same-process sweeper every 30s returns expired `running` jobs to `pending`. Attempts preserved; no lost work.
-- **Completion discipline:** `complete()` applies only `WHERE workerId=$w AND status='running'`; stale-lease completion is a no-op. All handlers are idempotent by output keys (`extract:<episodeId>`, `embed:<stmtId>:<model>`, `research:<entity>:<attr>:<dimHash>:<window>`), so crash-anywhere always resolves by re-execution, never by loss.
-- **Idempotent enqueue:** `idempotencyKey` carries a UNIQUE constraint; enqueue is `MERGE ON CREATE` — duplicates are no-ops returning the existing job id.
-- **Episode + outbox atomicity:** the `Episode` **and** its initial `extract` Job (+ `PENDING_EXTRACTION` edge) are created in one transaction. Crash ⇒ both or neither; there is no torn state to recover.
-- **Retries:** exponential backoff, `maxAttempts=5` → `dead`, visible via `GET /jobs/dead` and a UI banner; manual re-drive via replay endpoint.
-- **Replay scanner is reconciliation, not recovery:** it enqueues extraction for episodes lacking completed jobs — used for legacy imports, manual fixes, and post-incident repair. The normal crash path never relies on it.
-- **Derived indexes are rebuildable jobs:** `rebuild:indexes` is itself a batched, idempotent, job-tracked operation.
+A `:Job` node in Neo4j is the ledger; atomicity is established by lock acquisition + revalidation + a fencing token, committed in one transaction:
+
+**Constraints:** `job.id` unique; `job.idempotencyKey` unique; index on `(status, nextRunAt)`.
+
+**States:** `pending → running → completed | dead`; lease-expired `running` returns to `pending` via the sweeper. Fields: `workerId`, `leaseUntil`, `attempts`, `claimGeneration` (integer, monotonically increasing — **the fencing token**), `lastError`, `payloadJson`.
+
+**Claim protocol (one write transaction):**
+1. **Candidate selection:** read one candidate `MATCH (j:Job) WHERE j.status='pending' AND j.nextRunAt <= datetime() RETURN j.id LIMIT 1`.
+2. **Acquire a write lock on the specific node:** `MATCH (j:Job {id: $id}) SET j._lock = $workerId` — the write sets a lock on the node inside this transaction; competing claimers of the same node serialize on it. (Node-level write locking is the only lock Neo4j guarantees; we use it deliberately and document it. `apoc` locking is not required.)
+3. **Re-check eligibility after lock acquisition:** `MATCH (j:Job {id: $id}) WHERE j.status='pending' AND j.nextRunAt <= datetime()` — if the node changed hands while we waited, this returns zero rows and we retry from step 1. **This re-check, after the lock, is the correctness hinge.**
+4. **Claim and commit atomically:** in the same transaction as steps 2–3, `SET j.status='running', j.workerId=$workerId, j.leaseUntil=datetime()+duration(…), j.attempts=j.attempts+1, j.claimGeneration=coalesce(j.claimGeneration,0)+1, j._lock=null REMOVE j._lock RETURN j`.
+
+**Fenced completion (fencing-token check, not workerId alone):**
+```cypher
+MATCH (j:Job {id: $id}) WHERE j.status='running' AND j.claimGeneration = $gen
+SET j.status='completed', j.completedAt=datetime()
+```
+A worker that lost its lease, was reclaimed, and finishes late holds an old `claimGeneration`; its completion matches zero rows and is discarded — even if `workerId` was reused, the generation is not. All handler outputs carry the job id + generation and are written idempotently, so discarded late work is harmless re-execution, never corruption.
+
+**Stale-job recovery:** sweeper returns `running` jobs with `leaseUntil < now()` to `pending` (generation preserved — the re-claim increments it, invalidating any late original worker).
+
+**Idempotent enqueue:** `MERGE … ON CREATE SET …` on `idempotencyKey` (unique constraint); duplicates return the existing job.
+
+**Episode + outbox atomicity:** the `Episode` and its initial `extract` `:Job` (+ `PENDING_EXTRACTION` edge) are created in **one transaction**. No torn two-write window exists. The replay scanner is a **reconciliation** tool for legacy/partial/hand-repaired data — not the crash-recovery path.
+
+**Integration testing requirement (not optional):** an integration test suite runs N competing claim transactions against the **pinned Neo4j version** (docker compose service used by CI), asserting: exactly one winner per job across races; loser retries and claims nothing already running; a crashed-and-reclaimed job completed by the original worker is rejected via generation mismatch; a late completion by a stale worker is rejected even when workerId is recycled; sweeper resurrects expired jobs with a bumped generation. Unit tests of the claim function are necessary but never sufficient.
+
+**Retries:** backoff, `maxAttempts=5` → `dead`, visible via `GET /jobs/dead` + UI banner.
 
 ## Rejected alternatives
-- **Redis + BullMQ:** second stateful system to run, secure, and back up; its atomicity doesn't span the graph anyway (still needs the outbox discipline); rejected — adds a moving part while removing an invariant.
-- **In-process fire-and-forget promises:** any crash loses pending work silently; raw-data loss is unacceptable (ADR-004/010 principle). Rejected.
-- **SQLite outbox:** second store again, same split-consistency argument as ADR-002; rejected.
-- **Replay scanner as primary recovery:** would mask torn writes and double-processing bugs; demoted to reconciliation after the Episode+Job atomicity fix (Correction 3 of final review).
-- **DB-as-queue folklore dismissal ("don't use your database as a queue"):** valid at high throughput; irrelevant here (tens of jobs/minute) and its assumed fix (broker) costs more invariants than it buys. Lease claiming with sweeper is a correct, boring queue at this scale.
+- **Naive single-transaction MATCH+SET claim:** read-committed allows double-claim; rejected (the defect this ADR fixes).
+- **workerId-only completion check:** fails when a reclaimed job's late writer shares or reuses identity, or when lease expiry + immediate reclaim occurs before completion; rejected in favor of fencing tokens.
+- **APOC-based advisory locking:** introduces an optional-dependency failure surface without adding a guarantee the lock+recheck+commit pattern already provides; rejected (APOC remains for other uses only).
+- **Redis/BullMQ, SQLite outbox, fire-and-forget:** as before — rejected (second store / silent loss).
+- **Replay scanner as primary recovery:** rejected; it is reconciliation only.
 
 ## Consequences
-- Workers and API share the database budget; documented connection/heap guidance.
-- Job payloads are JSON, schema-validated per `kind`; poison payloads land in `dead` with the error preserved.
-- Concurrency is bounded by `LIMIT` in claim and worker count; horizontal scaling = more processes against the same ledger, which the transactional claim supports natively.
+- Claim is two statements in one transaction — marginally more code than the naive version, the price of an explicit guarantee.
+- `claimGeneration` must be stored, indexed not required, and propagated to every handler's completion call; missed propagation = silent fence bypass, so it is enforced by the job runner abstraction, not per-handler discipline.
+- The pinned Neo4j version + CI integration gate make the concurrency contract a build-enforced property, not documentation.

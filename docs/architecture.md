@@ -46,7 +46,7 @@ User ─► Web UI ─► API (chat, sessions, corrections, entity admin, jobs/d
 
 ## 3. Data model
 
-Authoritative nodes: `User`, `Episode`, `Entity`, `Statement`, `Observation`, `Evidence`, `Capture`, `Job`, plus audit nodes (`MergeEvent`, `SplitEvent`, `ResearchRun`, `UnresolvedEntity`). Derived: vector index, full-text indexes, cached `COMPARABLE_TO` (TTL-only, never authoritative — §6.3).
+Authoritative nodes: `User`, `Episode`, `Entity`, `Statement`, `Observation`, `Evidence`, `Capture`, `Job`, plus audit nodes (`MergeEvent`, `SplitEvent`, `LifecycleEvent`, `ResearchRun`, `UnresolvedEntity`). Derived: vector index, full-text indexes, cached `COMPARABLE_TO` (TTL-only, never authoritative — §6.3), the `Statement.status` projection (rebuilt from lifecycle events — §3.4).
 
 ### 3.1 `(:User)` — single-tenant by design (documented scope decision)
 `id` (`user:local`), `displayName`, `createdAt`, `timezone` (IANA — required for interpreting “3 November”, “last Monday”).
@@ -75,9 +75,9 @@ Recall queries hit Episodes first and never route through embeddings.
 | Authority | `assertedBy`: `user\|assistant\|extraction\|external_verification`; `epistemicStatus`: `user_asserted\|model_inferred\|externally_verified\|user_corrected` |
 | Confidence | `confidence` (float) — **extraction confidence only; never a truth score; never averaged across statements** |
 | Extraction metadata | `extractionModel`, `extractionPromptHash` |
-| Valid time | `validFrom`, `validTo` (null = unbounded/unknown/open-ended); `timePrecision` |
-| Recorded time | `recordedAt`, `supersededAt`, `supersededBy` |
-| Lifecycle | `status`: `active\|superseded\|retracted\|conflicted` |
+| Valid time | `validFrom` (null ⇔ **unknown valid-time start** — never epoch/now), `validTo` (upper bound only), `timePrecision`, and `validity`: `bounded | open_ended | ongoing` — distinguishing *known start, no known end* (`open_ended`) from *source-asserted continuance* (`ongoing`); there is no single null conflation (ADR-004) |
+| Recorded time | `recordedAt` |
+| Lifecycle | **Append-only events**, not fields: `:LifecycleEvent` (`superseded | retracted | conflicted | resolution_contested`) + `SUPERSEDES`/`RETRACTS`/`CONFLICTS_WITH` edges. The `status` property exists **only as a rebuildable projection** (derived from the event log; `npm run memory:check` replays events and validates the projection; `npm run memory:rebuild-projections` rebuilds it). Immutable content is never edited after creation (ADR-004) |
 
 Subject–predicate–object is carried by `SUBJECT`/`OBJECT` relationships to Entities; everything else lives on the Statement. **There are no bare entity↔entity fact edges** (ADR-003).
 
@@ -91,10 +91,12 @@ Subject–predicate–object is carried by `SUBJECT`/`OBJECT` relationships to E
 | Provenance | `source: { url, title, publisher, publishedAt?, accessedAt }`, `extractionMethod` (`api\|selector\|structured_llm\|manual`), `extractionConfidence` |
 | Versioning | `obsNormVersion` pinned (§9); **nodes are immutable — no field is ever updated after creation** |
 
-Supersession of changed external reality is expressed as **`(:Observation)-[:SUPERSEDED_BY]->(:Observation)`** (relationship + properties `detectedAt`, `researchRunId`, `reason`), never by mutating the old node. “Current” = not superseded. “History” = chain traversal.
+Supersession of changed external reality is expressed as **`(:Observation)-[:SUPERSEDED_BY]->(:Observation)`** (relationship + properties `detectedAt`, `researchRunId`, `reason`), **never by mutating the old node**. “Current” = not superseded. “History” = chain traversal.
 
-**Capture** (`:Capture`) — one per fetch, always:
-`id`, `fetchedAt`, `sourceUrl` (canonicalized), `httpStatus`, `bodyHash`, `extractedFieldHashes`, `jobId`. Fetches of unchanged pages create new Captures referencing the *same* Observation via `(:Capture)-[:OBSERVED]->(:Observation)` — two fetches, two Captures, one deduplicated Observation. Captures are the proof of what we saw even if the page later changes, and the replay input for eval.
+**Supersession is same-lineage only** (`sourceKey` = canonical host + publisher lineage): a disagreeing observation from an independent source never supersedes a prior one — both stand, joined by `CONFLICTS_WITH`, synthesis presents both (ADR-005).
+
+**Capture** (`:Capture`) — one per fetch attempt, always:
+`id`, `fetchedAt`, `sourceUrl` (canonicalized), `outcome` (`ok|http_error|timeout|parse_error|blocked`), `httpStatus?`, `errorKind?`, `bodyHash?` (only when `outcome='ok'`), `extractedFieldHashes?`, `jobId`. Fetches of unchanged pages create new Captures referencing the *same* Observation via `(:Capture)-[:OBSERVED]->(:Observation)` — two fetches, two Captures, one deduplicated Observation. **Failed fetches produce a Capture with no `OBSERVED` relationship** and feed `ResearchRun` coverage accounting; they are never silently dropped. Captures are the proof of what we saw (or failed to see) even if a page later changes, and the replay input for eval.
 
 ### 3.6 `(:Evidence)` — the single provenance spine
 `id`, `kind`: `episode_span\|external_url\|document`, `episodeId?`, `messageExternalId?`, `spanStart?`, `spanEnd?` (UTF-16 code units into `Episode.text` — documented), `quote?` (denormalized span, audit-friendly), `url?`, `accessedAt?`, `captureId?` (links to the Capture for external evidence).
@@ -112,11 +114,12 @@ Supersession of changed external reality is expressed as **`(:Observation)-[:SUP
 (:Observation)-[:OBSERVES]->(:Entity)
 (:Observation)-[:SUPPORTED_BY]->(:Evidence)
 (:Observation)-[:SUPERSEDED_BY]->(:Observation)
-(:Capture)-[:OBSERVED]->(:Observation)
+(:Capture)-[:OBSERVED]->(:Observation)   // absent for failed fetches
 (:Entity)-[:MERGED_INTO]->(:Entity)
 (:Episode)-[:PENDING_EXTRACTION]->(:Job)
+(:LifecycleEvent)-[:TARGETS]->(:Statement)        // audit backbone; emitted together with SUPERSEDES/RETRACTS edges
 ```
-No other fact-bearing edges exist. Audit nodes (`MergeEvent`, `SplitEvent`) preserve history of identity changes.
+No other fact-bearing edges exist. Audit nodes (`MergeEvent`, `SplitEvent`, `LifecycleEvent`) preserve history of identity and lifecycle changes; the `Statement.status` projection is always rebuildable from the latter.
 
 ### 3.8 Worked examples against the hiring-challenge cases
 **A — shortlisted five CRMs for a 20-person sales team.** Episode (verbatim) → statements: five `predicate="shortlisted", modality="shortlisted", epistemicStatus="user_asserted", validFrom=<day precision>`, each `SUPPORTED_BY` a span covering the tool name; plus `predicate="has_size", objectValue=20, qualifier={context:"sales team"}`. Entity recall query = `predicate='shortlisted' AND modality='shortlisted' AND status='active'` as-of now → exactly the five, attributed, dated, retractable.
@@ -132,9 +135,10 @@ No other fact-bearing edges exist. Audit nodes (`MergeEvent`, `SplitEvent`) pres
 - All times stored as UTC `datetime`. Episode additionally stores local wall-clock + IANA tz for display (“3 November” only parses in the user’s tz).
 - **Precision is a property, not a convention.** Day-precision bounds are `[00:00, 24:00)` in the user’s tz converted to UTC (DST-aware). Month/year similar. Never assume second precision from a value.
 - **Unknown dates:** `validFrom = null` means unbounded/unknown — never epoch, never “now”. All queries branch on null explicitly inside `TemporalFilter` (the *only* place interval semantics are implemented; nothing else re-implements them).
-- **Open intervals:** `validTo = null` ⇔ still believed true. “Current” predicate: `validTo IS NULL OR validTo > asOf` ∧ transaction-time bounds on `recordedAt`/`supersededAt`.
-- **Two as-of axes, always named:** `asOfValid` (state of the world then) and `asOfTx` (state of our knowledge then). Recall uses valid-time; “what did we believe on 3 Nov” uses transaction-time. Conflating them is the canonical bitemporal bug; contracts name the axis explicitly (`activeAt(asOfValid?, asOfTx?)`).
-- **Never overwrite history.** Correction = new Statement + `SUPERSEDES`; old gets `supersededAt`/`supersededBy` (these two are the *only* fields ever set post-creation — lifecycle transition, not content edit). Conflict = both kept + `CONFLICTS_WITH` + surfaced. Retraction = `status='retracted'`. Extraction re-runs dedup, never duplicates.
+- **Open intervals:** `validTo = null` ⇔ no end established; “Current” predicate: `validTo IS NULL OR validTo > asOf` ∧ transaction-time bound from the lifecycle event log (latest superseding/retracting `LifecycleEvent.at`), injected by `TemporalFilter`. Never interpreted bare — `validity` (bounded/open_ended/ongoing) disambiguates by definition (ADR-004).
+- **Two as-of axes, always named:** `asOfValid` (state of the world then) and `asOfTx` (knowledge then). Recall uses valid-time; “what did we believe on 3 Nov” uses transaction-time. Contracts name the axis explicitly (`activeAt(asOfValid?, asOfTx?)`).
+- **`validity` disambiguates open intervals:** `bounded` (both bounds), `open_ended` (known start, end never established — "since March 2024, no end recorded"), `ongoing` (source explicitly asserted continuance as of access date — "still employed there as of <date>"). `validTo = null` alone is ambiguous by design and is never interpreted without `validity`.
+- **Never overwrite history.** Correction = new Statement + `LifecycleEvent(kind=superseded)` + edge; retraction = `LifecycleEvent(kind=retracted)`; conflict = both kept + `CONFLICTS_WITH` + surfaced. The `status` projection is rebuilt from events and validated; content nodes are never edited after creation.
 - `timePrecision` travels with every statement so synthesis can say “around November 2026” instead of inventing a date.
 
 ## 5. Retrieval and planning
@@ -163,8 +167,9 @@ Full-text and graph legs are synchronous with commits (§8). Vector leg may lag;
 
 ### 6.1 Pipeline
 ```
-ResearchRun accounting: { id, entity, attribute, dims, queries[], sourcesVisited, sourcesFailed,
-                          coverageStatus: complete|partial|failed, startedAt, completedAt }
+ResearchRun accounting (mandatory, attached to every verdict): { id, entity, attribute, dims, queries[], startedAt, completedAt,
+  relevantSourceFound, sourceAccessible, attributeExtracted, dimensionsMatchedBaseline,
+  sourceAuthoritative, sourceFreshEnough, conflictingSourcesFound, coverageNotes } — see ADR-009 for the gating rules per verdict.
 1. Discover   — query generation from {entity alias set} × {attribute templates}; SearchProvider interface
                 (Tavily/Brave/…; fixture-recorded for eval); ranked source list; failures logged on the run
 2. Fetch      — HTML→readable text (or vendor JSON API where offered); bodyHash computed; raw snapshot
@@ -188,14 +193,14 @@ One engine; domains are `{attribute vocabulary + extraction schema + normalizati
 `COMPARABLE_TO` is at best a TTL’d cache of this computation, invalidated on obsNormVersion or normalization-table bump; never authoritative, never read for truth.
 
 ### 6.4 Verdict (what research established — exactly four)
-| verdict | meaning | required evidence |
+| verdict | meaning | required evidence (from ResearchRun) |
 |---|---|---|
-| `changed` | current observation exists; comparable; normalized values differ | both Captures + `comparable` |
-| `verified_unchanged` | comparable; values equal | both Captures + `comparable` |
-| `no_change_found` | research ran, sources visited, but nothing establishes the attribute’s current value (page redesigned, extraction failed, login wall, wrong dimension only) | ResearchRun showing visited-but-unusable sources |
-| `insufficient_evidence` | no usable source at all (empty search, all fetches failed, entity unresolvable) | ResearchRun with `coverageStatus: failed` and query list |
+| `changed` | current observation; comparable; normalized values differ | relevantSourceFound ∧ sourceAccessible ∧ attributeExtracted ∧ sourceAuthoritative ∧ sourceFreshEnough + `comparable`; conflicts rendered, never averaged |
+| `verified_unchanged` | comparable; values equal | same gates **all true**, no unresolved conflict — a stale page can never produce this verdict |
+| `no_change_found` | research ran; at least one coverage gate failed (nothing relevant / inaccessible / unextractable / dimension mismatch) | failing flags listed in the answer; dimension mismatch reported as ComparisonOutcome, values shown side-by-side |
+| `insufficient_evidence` | nothing usable at all | `coverageStatus: failed`; attempted queries and failed URLs listed verbatim |
 
-**A missing search result is never proof of no change** (ADR-009). Each verdict is emitted with its ResearchRun; synthesis renders the failed queries/sources verbatim when evidence is missing. Works identically for pricing (dimension-keyed) and releases/versions (semver ordering + `sourceEffectiveAt`).
+**A missing search result is never proof of no change** (ADR-009). Every verdict carries its ResearchRun; synthesis renders the failing coverage flags verbatim. Works identically for pricing (dimension-keyed) and releases/versions (semver ordering + `sourceEffectiveAt`; per-attribute freshness policy table).
 
 ## 7. Entity resolution (candidate generation ≠ authorization)
 
@@ -216,19 +221,11 @@ One engine; domains are `{attribute vocabulary + extraction schema + normalizati
 
 **Constraints:** `job.id` unique; `job.idempotencyKey` unique (`CREATE CONSTRAINT job_idem … REQUIRE j.idempotencyKey IS UNIQUE`); index on `(status, nextRunAt)`.
 
-**States:** `pending → running → completed | dead`, `running` re-claimable after lease expiry. Fields: `workerId`, `leaseUntil`, `attempts`, `maxAttempts`, `lastError`, `payloadJson`.
+**States:** `pending → running → completed | dead`; lease-expired `running` returns to `pending` via the sweeper. Fields: `workerId`, `leaseUntil`, `attempts`, `maxAttempts`, `claimGeneration` (monotonic fencing token), `lastError`, `payloadJson`.
 
-**Atomic claim (single transaction):**
-```cypher
-MATCH (j:Job) WHERE j.status = 'pending' AND j.nextRunAt <= datetime()
-WITH j ORDER BY j.nextRunAt ASC LIMIT 1
-MATCH (j) WHERE j.status = 'pending'
-SET j.status = 'running', j.workerId = $workerId,
-    j.leaseUntil = datetime() + duration({seconds: $leaseSec}),
-    j.attempts = j.attempts + 1
-RETURN j
-```
-Two racing workers: the transaction that flips `status` wins; the loser’s guarded re-match returns zero rows and claims the next candidate. Lease-expired sweeper (same process, 30s interval) returns `running → pending` for stalled jobs. Completion: `complete(jobId, workerId)` sets `status='completed'` only `WHERE workerId = $w AND status='running'` — stale-lease completions are no-ops; all handlers are idempotent by output keys, so re-execution is safe.
+**Fenced claim protocol** (full spec and rationale in ADR-010): per claim, in one write transaction — (1) read one candidate; (2) acquire a **write lock on that node** (`SET j._lock = $workerId`); (3) **re-check eligibility after lock acquisition** (`status='pending' AND nextRunAt <= now()`, else start over); (4) claim + `claimGeneration = coalesce(claimGeneration,0)+1` and commit atomically. Completion requires `status='running' AND claimGeneration = $gen` — a worker that lost its lease and finishes late (even with a recycled `workerId`) matches zero rows and is discarded. **This spacing matters: workerId-only checks do not protect a reclaimed job from its original late writer.** How this behaves is pinned by an integration test racing N claimers against the dockerized pinned Neo4j version in CI — unit tests alone are insufficient.
+
+**Lease & stale recovery:** workers heartbeat `leaseUntil`; a sweeper returns expired `running` jobs to `pending` (generation preserved; re-claim bumps it). Completion is idempotent by output keys; handlers are re-runnable. Episode + outbox Job are created in one transaction (no torn writes); the replay scanner is a reconciliation tool for legacy/partial data, never the crash-recovery path.
 
 **Episode + outbox atomicity:** `Episode` and its initial `extract` `:Job` (+ `PENDING_EXTRACTION` edge) are created in **one transaction**. Crash before commit ⇒ neither exists; after ⇒ both. No two-write window exists. The replay scanner (`npm run memory:replay`) is a **reconciliation** tool for legacy imports, manual fixes, and `dead`-job resets — never the recovery path for torn writes.
 
@@ -260,7 +257,7 @@ Two racing workers: the transaction that flips `status` wins; the loser’s guar
 
 Evaluation harness and fixture registry are introduced in **Slice 2** and extended in every later slice; Slice 10 is comprehensive evaluation only (ADR-012). Each slice lists components / contracts / dependencies / acceptance tests / usable-at-completion.
 
-**Slice 1 — Skeleton & memory spine.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (claim/complete/sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; FT read immediately after write passes. Usable: verbatim recall + raw capture.
+**Slice 1 — Skeleton & memory spine.** Components: compose file, Neo4j migrations+constraints (incl. job constraints), monolith scaffold, EpisodeStore, JobLedger (claim/complete/sweep), outbox ingestion, date-scoped raw recall endpoint, `memory:replay` reconciler. Contracts: `Episode`, `Job`, `RecallResult`. Dep: Neo4j only. Accept: clean-clone `docker compose up && npm run dev` green; episode roundtrip; **Example C-step-1 works verbatim**; crash tests yield both-or-nothing; **claim-race integration tests against the pinned Neo4j version green (N competing claimers, one winner per job; stale-generation completion rejected)**; FT read immediately after write passes. Usable: verbatim recall + raw capture.
 
 **Slice 2 — Contracts, fakes & eval scaffold.** Components: zod schemas (Episode/Statement/Entity/Observation/Evidence/Capture), provider interfaces + in-memory fakes, clock/id injection, error taxonomy, telemetry counters, `eval/` runner + matcher DSL + fixture registry + deterministic mode. Contracts: all data contracts (code twins). Accept: offline `npm test`; runner fails on regression (negative control); fixture-drift hash check; `npm run eval` skeleton exits 0. Usable: nothing user-facing — everything later is testable offline.
 
@@ -268,7 +265,7 @@ Evaluation harness and fixture registry are introduced in **Slice 2** and extend
 
 **Slice 4 — Entity resolution.** Components: blocking (trigram + embedding NN + type + co-mention), alias linking, review queue, soft merge/split with explicit reassignment plan, `:MergeEvent`/`:SplitEvent`, `MergePolicy` memory. Contracts: `ResolutionDecision`, `MergePlan`, `SplitPlan`. Accept: five CRMs → five entities; alias-exact links without review; cos-0.97-no-corroboration → review queue, no merge; explicit-mapping split reassigns exactly the mapped statements/evidence/aliases; audit history intact. Usable: entity pages + decision recall grounding.
 
-**Slice 5 — Temporal core & corrections.** Components: `TemporalFilter` (single implementation, both axes), `CorrectionService` (supersede-not-update), conflict detection (`CONFLICTS_WITH`), tz/precision-safe day bounds, “interpreted as …” echo contract. Contracts: `AsOf`, `CorrectionResult`. Accept: as-of before/after price-change fixtures; transactions-time filter “what did we believe on 3 Nov”; conflict fixture surfaces both claims; day-boundary tz case passes; property tests on interval logic. Usable: full temporal reasoning + user corrections.
+**Slice 5 — Temporal core & corrections.** Components: `TemporalFilter` (single implementation, both axes), `CorrectionService` (append-only `:LifecycleEvent` + `SUPERSEDES` edges; `status` projection rebuilt and validated — never content mutation), conflict detection (`CONFLICTS_WITH`), tz/precision-safe day bounds, “interpreted as …” echo contract. Contracts: `AsOf`, `CorrectionResult`. Accept: as-of before/after price-change fixtures; transactions-time filter “what did we believe on 3 Nov”; conflict fixture surfaces both claims; day-boundary tz case passes; property tests on interval logic. Usable: full temporal reasoning + user corrections.
 
 **Slice 6 — Hybrid retrieval & synthesis.** Components: Retriever (three legs + RRF + hop budgets + as-of injection), EvidenceResolver, Synthesizer (citations + certainty language + verbatim quotes), deterministic router (Q1/Q4), `consistency=strong` mode. Contracts: `EvidenceBundle`, `ScoredCandidate`, `GroundedAnswer`. Accept: golden semantic queries recall@5 target met; citation precision 100% on fixtures (quote ⊂ source); p95 <1.5s warm; strong-consistency-after-write case passes. Usable: **Example B**, general cited Q&A.
 

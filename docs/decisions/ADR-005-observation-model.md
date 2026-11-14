@@ -1,27 +1,36 @@
-# ADR-005: Observations are distinct from Statements; immutable; Capture-backed
+# ADR-005: Immutable Observations; Capture-backed dedup; cross-source disagreement is first-class
 
-**Status:** Accepted
+**Status:** Accepted (refined — adds cross-source semantics and failed-fetch Captures)
 
 ## Context
-Change detection (pricing, releases, hosting costs, versions) needs: dimension-aware value comparison (annual vs monthly billing), honest handling of missing history, and proof of *what we saw when* — including the common case where a source page changes silently after we fetch it. Statements express beliefs with provenance; conflating fetched measurements into beliefs loses the source-data layer that verification depends on.
+Observations are immutable measurements from external sources; Captures record each fetch. Two gaps were unspecified: (1) two independent sources reporting **different values for identical dimensions, currency, billing period, and effective period** — earlier text didn't say who supersedes whom; (2) what a **failed fetch** records.
 
 ## Decision
-`Observation` is a first-class, **immutable** node type separate from `Statement`:
 
-- Statements may be `GROUNDED_IN` observations; they never replace them.
-- Three timestamps with distinct semantics: `sourceEffectiveAt?` (source's claim about when the fact held; null if unstated — never inferred), `sourcePublishedAt?` (publication date; null if absent), `recordedAt` (capture time, always UTC — our ordering guarantee).
-- Supersession of changed reality is expressed via `(:Observation)-[:SUPERSEDED_BY]->(:Observation)`; the superseded node is never mutated — no `status` field is rewritten.
-- One `:Capture` per fetch (always, even when the fetched bytes match a known Observation): `(:Capture)-[:OBSERVED]->(:Observation)`. Two fetches → two Captures; identical re-fetch → new Capture, existing Observation (deduplicated by `obsKey`).
-- `COMPARABLE_TO` is a derived, TTL-cached comparison result, never stored authority.
-- `obs-norm/1` canonicalization (URLs, dimensions, timestamps, values, hashes) is pinned and versioned; bumps produce `normalization_mismatch`, never silent recomparison.
+### Cross-source disagreement (no cross-source supersession)
+- Observations dedup **within a source lineage**, never across sources. Source lineage key: `sourceKey = f(canonical_host, publisher)` recorded on the observation.
+- `SUPERSEDED_BY` may connect observations **from the same lineage only** (same vendor/page family, e.g., `stripe.com` pricing page re-fetched). A later-captured disagreeing observation from another lineage (`blog.example.com` vs `vendor.com`, or two mirror sites) **never supersedes** — both stand, linked by `CONFLICTS_WITH`, with full capture provenance, and synthesis must present both (publisher, access date) without choosing.
+- Extraction-source conflicts are a research outcome flag (`conflictingSourcesFound=true` on ResearchRun, ADR-009), not a resolution mechanism.
+- "Latest wins" is never a rule. "Same source, newer observedAt" is the *only* supersession that exists.
+
+### Failed fetches are evidence too
+- Every fetch attempt — including failures — writes a `:Capture { id, fetchedAt, sourceUrl, httpStatus, errorKind?, bodyHash?, extractedFieldHashes?, jobId, outcome: 'ok'|'http_error'|'timeout'|'parse_error'|'blocked' }`.
+- A failed Capture has **no `OBSERVED` relationship** (it observed nothing) but **does** exist and counts toward `ResearchRun.coverageStatus` (ADR-009). "No results" answers must be able to list tried-and-failed URLs.
+- `bodyHash` is present only for `outcome:'ok'`. Distinguishing `blocked`/login-wall from `timeout` matters for coverage honesty.
+- Captures are cheap and append-only; they are the replay input for eval fixtures and the audit trail for both successes and failures.
+
+### Unchanged mechanics (restated)
+- Immutable nodes; supersession only via `SUPERSEDED_BY` (relationship, never node mutation); two fetches of an identical page → two Captures, one Observation (obsKey dedup); changed values → new Observation + chain edge; cross-node mutation never occurs.
+- `obs-norm/1` canonicalization and versioned identity (obsKey incl. `obsNormVersion`) unchanged. `COMPARABLE_TO` remains derived cache only.
 
 ## Rejected alternatives
-- **Overload Statement with `kind='observation'`:** collapses measurement vs belief distinction; dimension/hash machinery doesn't fit the statement lifecycle; `SUPERSEDES` semantics get muddy (statement supersession already means something else — user correction).
-- **Overload Evidence with value/dimensions:** Evidence is a pointer (episode span or URL); adding normalized values, dims, and comparison logic turns it into a junk drawer and breaks the single provenance shape.
-- **Mutable "latest observation" upsert:** destroys history; re-fetch would silently rewrite what we previously reported; contradicts the provenance guarantee; rejected hard. An earlier draft marked observations `status:'superseded_by_same_source'` by mutating the old node — replaced by the `SUPERSEDED_BY` relationship.
-- **Dedup by ignoring captures (skip re-fetch writes):** loses the "we checked at time T and found X" evidence, making `verified_unchanged` unverifiable; rejected — Captures are the cheapest, highest-value audit artifact in the system.
+- **Latest-capture-wins across sources:** silent source substitution; reviewer's exact failure case; rejected.
+- **Lineage-blind supersession:** same bug, slower; rejected via `sourceKey` restriction.
+- **Failed fetches unrecorded ("we just found nothing"):** destroys the coverage accounting that ADR-009 verdicts depend on; rejected — failed Captures are mandatory.
+- **Source-quality scoring to auto-resolve conflicts:** manufactures certainty; surfaced conflicts are more honest and are the challenge's provenance requirement; rejected.
+- **Capture without outcome enum (free-text errors):** breaks automated coverage accounting and eval assertions; rejected.
 
 ## Consequences
-- Two fact-bearing types to learn; mitigated by one shared Evidence spine and one `Researcher` API.
-- Capture volume grows with refresh jobs (Slice 9); acceptable, and bodies are hashed, not stored, by default.
-- `obs-norm` fuzz testing is mandatory (Slice 7); a canonicalization bug forks identity into phantom "changed" observations.
+- Conflict-heavy domains (pricing via aggregators vs vendor pages) will regularly surface two observations; UI/synthesis must render disagreement — golden cases assert this.
+- Storage grows with failed captures; retention policy documented (hashes only, no bodies).
+- The dedup key loses meaning across sources by construction — intentional: duplicates across lineages are *disagreements or confirmations*, both valuable, never collapsed.
