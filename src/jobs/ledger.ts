@@ -31,6 +31,12 @@ export interface LedgerConfig {
   sweepIntervalMs: number;
 }
 
+/** Test-only instrumentation hook — undefined in production. */
+export interface LedgerTestHooks {
+  /** Called inside the fenced transaction AFTER the fence passes, BEFORE any write. */
+  afterFenceCheck?: () => Promise<void>;
+}
+
 const DEFAULTS: LedgerConfig = { leaseSeconds: 120, sweepIntervalMs: 30_000 };
 
 function toJob(r: Neo4jRecord): Job {
@@ -68,6 +74,7 @@ export class JobLedger {
   constructor(
     private readonly driver: Driver,
     private readonly cfg: LedgerConfig = DEFAULTS,
+    private readonly testHooks?: LedgerTestHooks,
   ) {}
 
   /** Idempotent enqueue (unique idempotencyKey; MERGE ON CREATE). Returns the job id. */
@@ -216,9 +223,11 @@ export class JobLedger {
       return await session.executeWrite(async (tx) => {
         try {
           await this.lockAndFence(tx, jobId, claimGeneration, workerId);
-        } catch {
-          return false;
+        } catch (err) {
+          if (err instanceof FencingError) return false;
+          throw err; // infrastructure failures must not masquerade as stale-owner rejection
         }
+        await this.testHooks?.afterFenceCheck?.();
         await tx.run(
           `MATCH (j:Job {id: $id}) SET j.leaseUntil = datetime() + duration({seconds: $leaseSeconds})`,
           { id: jobId, leaseSeconds: this.cfg.leaseSeconds },
@@ -246,6 +255,7 @@ export class JobLedger {
     try {
       return await session.executeWrite(async (tx) => {
         await this.lockAndFence(tx, jobId, claimGeneration, workerId);
+        await this.testHooks?.afterFenceCheck?.();
         try {
           return await write(tx);
         } finally {
@@ -277,9 +287,11 @@ export class JobLedger {
       return await session.executeWrite(async (tx) => {
         try {
           await this.lockAndFence(tx, jobId, claimGeneration, workerId);
-        } catch {
-          return false; // fence lost — stale or reclaimed worker
+        } catch (err) {
+          if (err instanceof FencingError) return false; // fence lost — stale or reclaimed worker
+          throw err;
         }
+        await this.testHooks?.afterFenceCheck?.();
         await tx.run(
           `MATCH (j:Job {id: $id})
            SET j.status = 'completed', j.completedAt = datetime()`,
@@ -313,9 +325,11 @@ export class JobLedger {
         let fence: { attempts: number; maxAttempts: number };
         try {
           fence = await this.lockAndFence(tx, jobId, claimGeneration, workerId);
-        } catch {
-          return "rejected";
+        } catch (err) {
+          if (err instanceof FencingError) return "rejected";
+          throw err;
         }
+        await this.testHooks?.afterFenceCheck?.();
         const { attempts, maxAttempts } = fence;
         if (attempts >= maxAttempts) {
           await tx.run(

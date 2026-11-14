@@ -189,6 +189,105 @@ test("concurrent: stale output writer racing the reclaim path — stale side nev
   }
 });
 
+test("TOCTOU: paused worker holding the Job lock — reclaimer cannot interpose before commit", async () => {
+  const jobId = await ledger.enqueue("noop", { t: "toctou-a" }, "toctou:1");
+  const j1 = await ledger.claimNext("w1");
+  const gen1 = j1!.claimGeneration;
+
+  // Gate controlled by the test: the worker pauses AFTER the fence check,
+  // INSIDE the transaction that holds the Job's write lock.
+  let releaseWorker!: () => void;
+  let fencePassed!: () => void;
+  const fencePassedPromise = new Promise<void>((r) => (fencePassed = r));
+  const releaseWorkerPromise = new Promise<void>((r) => (releaseWorker = r));
+
+  const gatedLedger = new JobLedger(ctx.driver, { leaseSeconds: 120, sweepIntervalMs: 30_000 }, {
+    afterFenceCheck: async () => {
+      fencePassed(); // signal: fence passed, lock held, nothing written yet
+      await releaseWorkerPromise; // hold the transaction open with the lock held
+    },
+  });
+
+  const staleWrite = gatedLedger.commitFencedOutput(jobId, gen1, "w1", (tx) =>
+    tx.run("CREATE (o:JobOutput {jobId: $jobId, claimGeneration: $gen, marker: 'stale'})", { jobId, gen: gen1 }),
+  );
+
+  // fence passed; worker holds the Job's write lock and is paused mid-transaction
+  await fencePassedPromise;
+
+  // External interference starts now and MUST NOT interpose: it blocks on the lock.
+  const externalExpire = (async () => {
+    const s = newSession(ctx.driver, "WRITE");
+    const startedAt = Date.now();
+    try {
+      await s.run("MATCH (j:Job {id: $id}) SET j.leaseUntil = datetime() - duration({minutes: 5})", { id: jobId });
+      return Date.now() - startedAt; // ms it had to wait on the paused writer's lock
+    } finally {
+      await s.close();
+    }
+  })();
+
+  const claimAttempt = await ledger.claimNext("w2"); // running job, can never be claimed
+  assert.equal(claimAttempt, null, "a running job must never be re-claimable, even mid-transaction");
+
+  releaseWorker(); // let the paused writer finish its fenced transaction
+  await staleWrite; // output committed exactly once, under its fence
+
+  // external interference was queued behind the writer's lock — it applies only after the writer's transaction commits
+  const blockedMs = await externalExpire;
+  void blockedMs;
+  assert.equal(
+    await countWhere("MATCH (j:Job {id: $id}) WHERE j.leaseUntil < datetime() RETURN count(j) AS n", {
+      id: jobId,
+    }),
+    1,
+    "interference applied only after the writer's transaction released the lock",
+  );
+
+  assert.equal(
+    await countWhere(
+      "MATCH (o:JobOutput {jobId: $id, claimGeneration: $gen, marker: 'stale'}) RETURN count(o) AS n",
+      { id: jobId, gen: gen1 },
+    ),
+    1,
+    "output committed by the lock-holding transaction is durable exactly once",
+  );
+
+  // job remains running-but-expired and is cleanly reclaimable — state consistent throughout
+  await ledger.sweep();
+  const reclaimed = await ledger.claimNext("w2");
+  assert.ok(reclaimed, "expired job must be reclaimable after the writer finishes");
+  assert.equal(reclaimed!.claimGeneration, gen1 + 1);
+});
+
+test("TOCTOU reverse ordering: expire first, then writer and reclaimer race — writer loses", async () => {
+  const jobId = await ledger.enqueue("noop", { t: "toctou-b" }, "toctou:2");
+  const j1 = await ledger.claimNext("w1");
+  const gen1 = j1!.claimGeneration;
+  await forceExpire(jobId);
+
+  const [staleWrite, staleComplete, sweepThenReclaim] = await Promise.all([
+    ledger.commitFencedOutput(jobId, gen1, "w1", (tx) =>
+      tx.run("CREATE (o:JobOutput {jobId: $jobId, claimGeneration: $gen})", { jobId, gen: gen1 }),
+    ).then(
+      () => "committed",
+      () => "rejected",
+    ),
+    ledger.complete(jobId, gen1, "w1"),
+    ledger.sweep().then(() => ledger.claimNext("w2")),
+  ]);
+
+  assert.equal(staleWrite, "rejected");
+  assert.equal(staleComplete, false);
+  assert.ok(sweepThenReclaim, "reclaimer gets the job");
+  assert.ok(sweepThenReclaim!.claimGeneration > gen1);
+  assert.equal(
+    await countWhere("MATCH (o:JobOutput {jobId: $id}) RETURN count(o) AS n", { id: jobId }),
+    0,
+    "stale writer must not persist anything, even in the reverse ordering",
+  );
+});
+
 test("duplicate enqueue is a no-op returning the same job id", async () => {
   const a = await ledger.enqueue("extract", { x: 1 }, "dup:1");
   const b = await ledger.enqueue("extract", { x: 1 }, "dup:1");
