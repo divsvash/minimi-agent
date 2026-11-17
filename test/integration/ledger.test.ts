@@ -189,9 +189,11 @@ test("concurrent: stale output writer racing the reclaim path — stale side nev
   }
 });
 
-test("TOCTOU: paused worker holding the Job lock — reclaimer cannot interpose before commit", async () => {
+test("TOCTOU: paused worker holding the Job lock — the real sweeper blocks on the lock, then reclaims after commit", async () => {
+  // 1-second lease so it lapses naturally WHILE the fenced transaction is paused
+  const shortLedger = new JobLedger(ctx.driver, { leaseSeconds: 1, sweepIntervalMs: 30_000 });
   const jobId = await ledger.enqueue("noop", { t: "toctou-a" }, "toctou:1");
-  const j1 = await ledger.claimNext("w1");
+  const j1 = await shortLedger.claimNext("w1");
   const gen1 = j1!.claimGeneration;
 
   // Gate controlled by the test: the worker pauses AFTER the fence check,
@@ -201,9 +203,9 @@ test("TOCTOU: paused worker holding the Job lock — reclaimer cannot interpose 
   const fencePassedPromise = new Promise<void>((r) => (fencePassed = r));
   const releaseWorkerPromise = new Promise<void>((r) => (releaseWorker = r));
 
-  const gatedLedger = new JobLedger(ctx.driver, { leaseSeconds: 120, sweepIntervalMs: 30_000 }, {
+  const gatedLedger = new JobLedger(ctx.driver, { leaseSeconds: 1, sweepIntervalMs: 30_000 }, {
     afterFenceCheck: async () => {
-      fencePassed(); // signal: fence passed, lock held, nothing written yet
+      fencePassed(); // signal: fence passed (lease valid), lock held, nothing written yet
       await releaseWorkerPromise; // hold the transaction open with the lock held
     },
   });
@@ -215,34 +217,51 @@ test("TOCTOU: paused worker holding the Job lock — reclaimer cannot interpose 
   // fence passed; worker holds the Job's write lock and is paused mid-transaction
   await fencePassedPromise;
 
-  // External interference starts now and MUST NOT interpose: it blocks on the lock.
-  const externalExpire = (async () => {
-    const s = newSession(ctx.driver, "WRITE");
-    const startedAt = Date.now();
+  // Running job is simply not a claim candidate — ineligible regardless of the lock.
+  // (This is not the serialization guarantee; the sweeper below is.)
+  const claimAttempt = await shortLedger.claimNext("w2");
+  assert.equal(claimAttempt, null, "a running job is not eligible for claiming");
+
+  // Wait until the SERVER agrees the lease lapsed — Docker VM clock skew makes a
+  // fixed client-side sleep unreliable under load.
+  {
+    const s = newSession(ctx.driver, "READ");
     try {
-      await s.run("MATCH (j:Job {id: $id}) SET j.leaseUntil = datetime() - duration({minutes: 5})", { id: jobId });
-      return Date.now() - startedAt; // ms it had to wait on the paused writer's lock
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const { records } = await s.run(
+          "MATCH (j:Job {id: $id}) RETURN (j.leaseUntil < datetime()) AS expired",
+          { id: jobId },
+        );
+        if (records[0]?.get("expired") === true) break;
+        if (Date.now() > deadline) assert.fail("lease did not lapse server-side within 10s");
+        await new Promise((r) => setTimeout(r, 100));
+      }
     } finally {
       await s.close();
     }
-  })();
+  }
 
-  const claimAttempt = await ledger.claimNext("w2"); // running job, can never be claimed
-  assert.equal(claimAttempt, null, "a running job must never be re-claimable, even mid-transaction");
+  // The REAL sweep path: it finds the expired job, then its lock+recheck transaction
+  // must queue behind the paused writer's write lock.
+  const sweepStarted = Date.now();
+  const sweepPromise = shortLedger.sweep();
+  const early = await Promise.race([
+    sweepPromise.then(() => "done" as const),
+    new Promise<"pending">((r) => setTimeout(() => r("pending"), 300)),
+  ]);
+  assert.equal(early, "pending", "sweep must wait on the paused writer's lock — it cannot requeue around it");
 
   releaseWorker(); // let the paused writer finish its fenced transaction
-  await staleWrite; // output committed exactly once, under its fence
+  await staleWrite; // serialized ownership: fence passed before expiry, lock held → commits exactly once
 
-  // external interference was queued behind the writer's lock — it applies only after the writer's transaction commits
-  const blockedMs = await externalExpire;
-  void blockedMs;
-  assert.equal(
-    await countWhere("MATCH (j:Job {id: $id}) WHERE j.leaseUntil < datetime() RETURN count(j) AS n", {
-      id: jobId,
-    }),
-    1,
-    "interference applied only after the writer's transaction released the lock",
+  const sweepResult = await sweepPromise;
+  const blockedMs = Date.now() - sweepStarted;
+  assert.ok(
+    blockedMs >= 300,
+    `sweep completed only after the writer's lock released — it waited ${blockedMs}ms behind the writer`,
   );
+  assert.equal(sweepResult.requeued, 1, "sweeper requeued the expired job after the writer committed");
 
   assert.equal(
     await countWhere(
@@ -253,10 +272,9 @@ test("TOCTOU: paused worker holding the Job lock — reclaimer cannot interpose 
     "output committed by the lock-holding transaction is durable exactly once",
   );
 
-  // job remains running-but-expired and is cleanly reclaimable — state consistent throughout
-  await ledger.sweep();
-  const reclaimed = await ledger.claimNext("w2");
-  assert.ok(reclaimed, "expired job must be reclaimable after the writer finishes");
+  // job was requeued by the sweeper and is cleanly reclaimable — state consistent throughout
+  const reclaimed = await shortLedger.claimNext("w2");
+  assert.ok(reclaimed, "sweeper-requeued job must be claimable");
   assert.equal(reclaimed!.claimGeneration, gen1 + 1);
 });
 
