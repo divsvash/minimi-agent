@@ -19,10 +19,16 @@ A `:Job` node in Neo4j is the ledger; atomicity is established by lock acquisiti
 3. **Re-check eligibility after lock acquisition:** `MATCH (j:Job {id: $id}) WHERE j.status='pending' AND j.nextRunAt <= datetime()` — if the node changed hands while we waited, this returns zero rows and we retry from step 1. **This re-check, after the lock, is the correctness hinge.**
 4. **Claim and commit atomically:** in the same transaction as steps 2–3, `SET j.status='running', j.workerId=$workerId, j.leaseUntil=datetime()+duration(…), j.attempts=j.attempts+1, j.claimGeneration=coalesce(j.claimGeneration,0)+1, j._lock=null REMOVE j._lock RETURN j`.
 
-**Lease semantics — expiry revokes ownership immediately.** `leaseUntil > datetime()` is a conjunctive condition for **all** ownership operations, alongside `claimGeneration`. A worker whose lease expired owns nothing — even before the sweeper runs. There is no grace period and no dependence on the sweeper for correctness (the sweeper only requeues; the fences do the rejecting).
+**Lease semantics — serialized ownership, not wall-clock revocation.** `leaseUntil > datetime()` is a conjunctive condition for **all** ownership operations, alongside `claimGeneration`, and is evaluated **at fence time — inside the transaction that holds the job's write lock**. It is not a wall-clock instant at which ownership evaporates:
+
+- A transaction that acquires the job's write lock, passes the fence, and then commits **still owns the operation through COMMIT** — even if `leaseUntil` passes while the transaction is open. The fence check happened inside the lock; the lock is held until the writes are durable; a reclaimer cannot interpose.
+- A worker whose lease has expired **at fence time** (i.e. its transaction starts — or its fence check runs — after the lease lapsed) owns nothing: the fence matches zero rows and its outputs/completion are discarded.
+- Expiry makes a job *eligible* for reclaim; it does not revoke an in-flight fenced transaction. The ownership transition (fenced holder commits → sweeper requeues → next claim bumps `claimGeneration`) is serialized through the same node write lock, so a fenced transaction and a reclaimer can never both commit.
+
+There is no grace period and no dependence on the sweeper for correctness (the sweeper only requeues; the fences do the rejecting — at fence time, under the lock). Wall-clock revocation mid-transaction was considered and rejected: Neo4j cannot make "ownership must be valid at commit time" true without either holding a lock across the commit boundary (which is exactly the serialized model) or aborting the writer from outside (which the store does not support) — the serialized model is the strongest guarantee available, and this ADR documents it as such rather than implying immediate revocation.
 
 **Fenced output writes (the completion check alone is insufficient):**
-**Every durable job output — statements, observations, evidence, child jobs, any side effect persisted to the store — must be committed only in the same transaction that re-validates `status='running' AND claimGeneration=$gen AND leaseUntil > datetime()`.** Outputs carry `(jobId, claimGeneration)`; the fence check and the output commit happen atomically. A stale worker's output transaction fails the re-validation and commits nothing.
+**Every durable job output — statements, observations, evidence, child jobs, any side effect persisted to the store — must be committed only in the same transaction that re-validates `status='running' AND claimGeneration=$gen AND leaseUntil > datetime()` at fence time.** Outputs carry `(jobId, claimGeneration)`; the fence check and the output commit happen atomically. A stale worker's output transaction fails the re-validation and commits nothing.
 
 For multi-step or externally-visible effects that cannot share the store transaction (downstream APIs, long fetch loops), use the **provisional pattern**: write generation-scoped provisional output (invisible — either `(:Provisional {jobId, claimGeneration})`-tagged or filtered by a `provisional` flag from all queries and downstream jobs), then **promote** it in the fenced completion transaction. If promotion's fence fails, the provisionals are garbage-collected as invisible debris — they were never readable, never actioned.
 
@@ -33,7 +39,7 @@ Idempotency keys on outputs are **necessary but not sufficient**: they prevent d
 MATCH (j:Job {id: $id}) WHERE j.status='running' AND j.claimGeneration = $gen AND j.leaseUntil > datetime()
 SET j.status='completed', j.completedAt=datetime()
 ```
-A late or lease-expired worker's completion matches zero rows and is discarded — even with a recycled `workerId`, its generation is stale. All handlers are idempotent by output keys, so any rejected attempt is harmless re-execution, never corruption.
+A late or lease-expired-at-fence-time worker's completion matches zero rows and is discarded — even with a recycled `workerId`, its generation is stale. (A worker whose lease lapses *after* its fence passed, inside the open transaction, completes successfully — the lock serializes it ahead of any reclaimer.) All handlers are idempotent by output keys, so any rejected attempt is harmless re-execution, never corruption.
 
 **Stale-job recovery:** sweeper requeues expired `running` jobs (`leaseUntil < now()` → `pending`); generation preserved at requeue, bumped on the next claim — invalidating any late original worker for both completion and output writes.
 
