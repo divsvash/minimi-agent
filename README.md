@@ -1,6 +1,7 @@
 # Minimi
 
-Conversational agent with persistent, temporal, relational memory. Start here: **[DESIGN.md](DESIGN.md)** (one page) · full reference: **[docs/architecture.md](docs/architecture.md)** · decisions: **[docs/decisions/](docs/decisions/)**
+Minimi is a conversational agent built around persistent memory rather than disposable chat history. Its first implementation provides atomic episode ingestion, timezone-aware recall, full-text search and a fenced background job ledger. 
+Start here: **[DESIGN.md](DESIGN.md)** (one page) · full reference: **[docs/architecture.md](docs/architecture.md)** · decisions: **[docs/decisions/](docs/decisions/)**
 
 ## Status: Slice 1 shipped & verified; Slices 2–11 planned
 
