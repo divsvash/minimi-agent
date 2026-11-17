@@ -92,10 +92,9 @@ export function createApp(deps: AppDeps) {
   }));
 
   // Final error middleware — unexpected failures become controlled 500s, never unhandled rejections
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     console.error("unhandled request error:", err);
-    if (res.headersSent) return;
+    if (res.headersSent) return next(err);
     res.status(500).json({ error: "internal_error" });
   });
 

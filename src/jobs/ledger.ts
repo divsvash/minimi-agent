@@ -67,7 +67,12 @@ function toJob(r: Neo4jRecord): Job {
  *   1. read one pending candidate  2. write-lock the node  3. re-check eligibility
  *   4. claim + claimGeneration++ committed atomically.
  * Completion and ALL durable outputs require status='running' AND claimGeneration AND
- * leaseUntil > now() in the SAME transaction — an expired lease revokes ownership immediately.
+ * leaseUntil > now() — evaluated at fence time, inside the transaction that holds the
+ * job's write lock. Ownership is SERIALIZED, not wall-clock-revoked: a transaction that
+ * passes the fence and holds the lock owns the operation until COMMIT — if the lease
+ * expires while it is open, its writes still commit. Expiry only makes the job eligible
+ * for reclaim; the reclaimer queues behind the lock, so fenced holder and sweeper can
+ * never both win. See ADR-010.
  * External/multi-step effects use generation-scoped provisional output + fenced promotion.
  */
 export class JobLedger {
@@ -84,6 +89,9 @@ export class JobLedger {
     idempotencyKey: string,
     opts: EnqueueOptions = {},
   ): Promise<string> {
+    // Default nextRunAt is backdated a few seconds: the new job must be eligible
+    // immediately, and a temporary clock jump backwards on the Neo4j host would
+    // otherwise make just-enqueued jobs unclaimable (observed in CI on VM clocks).
     const session = newSession(this.driver, "WRITE");
     try {
       const { records } = await session.run(
@@ -91,7 +99,7 @@ export class JobLedger {
          ON CREATE SET j.id = $id, j.kind = $kind, j.payloadJson = $payload,
                        j.status = 'pending', j.attempts = 0,
                        j.maxAttempts = $maxAttempts, j.claimGeneration = 0,
-                       j.nextRunAt = coalesce(datetime($nextRunAt), datetime()),
+                       j.nextRunAt = coalesce(datetime($nextRunAt), datetime() - duration({seconds: 5})),
                        j.createdAt = datetime()
          RETURN j.id AS id`,
         {
@@ -112,7 +120,10 @@ export class JobLedger {
   /** Claim the next eligible job. Returns null when the queue is empty. */
   async claimNext(workerId: string): Promise<Job | null> {
     const tried = new Set<string>();
-    const maxRounds = 16;
+    // Each round either claims a job or retires one already-claimed candidate, so
+    // the loop terminates. maxRounds is only a backstop against pathological
+    // enqueue/claim churn — 16 was far too small and starved claimers under load.
+    const maxRounds = 10_000;
     for (let round = 0; round < maxRounds; round++) {
       const session = newSession(this.driver, "WRITE");
       try {
@@ -179,7 +190,10 @@ export class JobLedger {
    * Acquire the Job write lock and re-validate ownership INSIDE the same
    * transaction (ADR-010). A concurrent sweeper/reclaimer cannot interpose
    * between our check and our writes: we hold the node's write lock from
-   * before the re-check until COMMIT. Throws FencingError on loss.
+   * before the re-check until COMMIT. If the lease expires while this
+   * transaction is open, our writes still commit — the reclaimer waits on
+   * the lock and re-validates afterwards (serialized ownership, ADR-010).
+   * Throws FencingError on loss.
    */
   private async lockAndFence(
     tx: import("neo4j-driver").ManagedTransaction,
@@ -391,7 +405,7 @@ export class JobLedger {
           await tx.run(
             `MATCH (j:Job {id: $id})
              SET j.status='pending', j.workerId=null, j.leaseUntil=null,
-                 j.nextRunAt=datetime(), j.lastError='lease expired (reclaimed by sweeper)'
+                 j.nextRunAt=datetime() - duration({seconds: 5}), j.lastError='lease expired (reclaimed by sweeper)'
              REMOVE j._lock`,
             { id },
           );
@@ -441,7 +455,7 @@ export class JobLedger {
     try {
       await session.run(
         `MATCH (j:Job {id: $id, status: 'dead'})
-         SET j.status='pending', j.attempts=0, j.nextRunAt=datetime(), j.lastError=null`,
+         SET j.status='pending', j.attempts=0, j.nextRunAt=datetime() - duration({seconds: 5}), j.lastError=null`,
         { id: jobId },
       );
     } finally {
