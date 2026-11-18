@@ -21,6 +21,7 @@ export class InMemoryEpisodeStore implements EpisodeStore {
   }
 
   async byOccurredRange(from: Date, to: Date, role?: Episode["role"]): Promise<Episode[]> {
+    if (from.getTime() >= to.getTime()) return []; // invalid range ⇒ empty, matching the Neo4j store
     return [...this.episodes.values()]
       .filter((e) => {
         const t = new Date(e.occurredAt);

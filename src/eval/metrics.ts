@@ -1,6 +1,17 @@
 import type { GoldenMetric } from "./goldenCase.js";
 import type { AssertionResult } from "./matchers.js";
 
+/**
+ * A failing assertion counts as a FALSE UNCHANGED claim iff the output under test
+ * itself asserts `verdict: verified_unchanged` (path contains "verdict") and that
+ * assertion fails — i.e. the system claimed "nothing changed" where the fixture
+ * forbids or contradicts that. Failures on unrelated paths (citations, sources,
+ * formatting) are ordinary failures, not false-unchanged claims.
+ */
+export function claimsVerifiedUnchanged(a: AssertionResult): boolean {
+  return !a.pass && a.actual === "verified_unchanged" && /verdict/i.test(a.path);
+}
+
 export type CaseStatus = "pass" | "fail" | "pending";
 
 export interface CaseResult {
@@ -13,6 +24,8 @@ export interface CaseResult {
   noChangeTrap: boolean;
   latencyMs: number;
   costUsd: number;
+  /** Which providers the case actually used, and what they cost. Empty = no provider was used. */
+  costBreakdown: readonly { source: string; usd: number }[];
   assertions: AssertionResult[];
   /** Set when the SUT threw instead of returning output. */
   error?: string;
@@ -33,7 +46,12 @@ export interface EvalMetrics {
   temporalCorrectness: number | null;
   /** Fraction of EXECUTED cases tagged citation_coverage that pass; null if none executed. */
   citationCoverage: number | null;
-  /** Count of executed no-change-trap cases that failed — target is ALWAYS 0 (§6.4, ADR-009). */
+  /**
+   * Count of executed cases whose failing assertions include the system itself
+   * claiming `verdict: verified_unchanged` where the fixture forbids/contradicts it.
+   * Not a count of all trap-case failures — unrelated failures (citations, sources)
+   * are NOT false-unchanged claims. Target for the whole suite is ALWAYS 0 (§6.4, ADR-009).
+   */
   falseUnchangedViolations: number;
   /** Executed (non-pending) cases' latency distribution. */
   latencyMs: LatencyStats;
@@ -64,7 +82,7 @@ export function computeMetrics(results: CaseResult[]): EvalMetrics {
     recallCorrectness: passRate(results, "historical_recall"),
     temporalCorrectness: passRate(results, "temporal_correctness"),
     citationCoverage: passRate(results, "citation_coverage"),
-    falseUnchangedViolations: executed.filter((r) => r.noChangeTrap && r.status === "fail").length,
+    falseUnchangedViolations: executed.filter((r) => r.assertions.some(claimsVerifiedUnchanged)).length,
     latencyMs: {
       p50: pctl(latencies, 50),
       p95: pctl(latencies, 95),

@@ -5,8 +5,14 @@ import { performance } from "node:perf_hooks";
 import { GoldenCaseSchema, type GoldenCase } from "./goldenCase.js";
 import { applyAssertions } from "./matchers.js";
 import { computeMetrics, type CaseResult, type EvalMetrics } from "./metrics.js";
+import { UsageCollector } from "./usage.js";
 
-export type SutHandler = (input: Record<string, unknown>) => Promise<unknown>;
+/**
+ * SUT handler signature. The second argument is a per-case usage/cost collector —
+ * a handler that calls providers MUST record their cost through it; the harness
+ * never fabricates a zero-cost result for a handler that used nothing.
+ */
+export type SutHandler = (input: Record<string, unknown>, usage: UsageCollector) => Promise<unknown>;
 export type SutRegistry = Record<string, SutHandler>;
 
 export interface EvalReport {
@@ -93,6 +99,7 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
     noChangeTrap: c.noChangeTrap,
     assertions: [],
     costUsd: 0,
+    costBreakdown: [],
   };
   if (!handler) {
     return {
@@ -103,8 +110,9 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
     };
   }
   const t0 = performance.now();
+  const usage = new UsageCollector();
   try {
-    const output = await handler(c.input ?? {});
+    const output = await handler(c.input ?? {}, usage);
     const assertions = applyAssertions(output, c.expect);
     const latencyMs = performance.now() - t0;
     const failed = assertions.filter((a) => !a.pass);
@@ -113,6 +121,8 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
       status: failed.length === 0 ? "pass" : "fail",
       latencyMs,
       assertions,
+      costUsd: usage.totalUsd(),
+      costBreakdown: usage.breakdown(),
       summary: failed.length === 0 ? "ok" : `${failed.length}/${assertions.length} assertions failed: ${failed.map((a) => `${a.path} ${a.op}`).join(", ")}`,
     };
   } catch (err) {
@@ -121,6 +131,8 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
       status: "fail",
       latencyMs: performance.now() - t0,
       error: err instanceof Error ? err.message : String(err),
+      costUsd: usage.totalUsd(),
+      costBreakdown: usage.breakdown(),
       summary: `SUT threw: ${err instanceof Error ? err.message : String(err)}`,
     };
   }

@@ -4,10 +4,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  loadCases, runCases, checkDrift, bless, computeTreeHash,
+  loadCases, runCases, checkDrift, bless, computeTreeHash, type SutRegistry,
 } from "./harness.js";
 import { runEval, parseArgs } from "./run.js";
 import { sutRegistry } from "./registry.js";
+import { UsageCollector } from "./usage.js";
+import { FakeLLMProvider, llmCostUsd } from "../fakes/providers.js";
 
 const repoGolden = join(process.cwd(), "eval", "golden");
 const repoLock = join(process.cwd(), "eval", "fixtures.lock.json");
@@ -116,9 +118,51 @@ test("repo lock file matches the repo golden tree", async () => {
   assert.deepEqual(drift, { ok: true, mismatched: [], missing: [], added: [] });
 });
 
+test("per-case usage/cost collector records actual provider cost", async () => {
+  const llm = new FakeLLMProvider(() => ({
+    text: "x", model: "fake-llm-1", usage: { inputTokens: 1_000_000, outputTokens: 1_000_000 },
+  }));
+  const registry: SutRegistry = {
+    "llm.example": async (_input, usage) => {
+      const res = await llm.complete({ messages: [{ role: "user", content: "hi" }] });
+      usage.record(`llm:${res.model}`, llmCostUsd(res.model, res.usage));
+      return { ok: true };
+    },
+  };
+  const report = await runCases(
+    [{
+      id: "cost-case", title: "t", kind: "scenario", sut: "llm.example", input: {},
+      expect: [{ path: "ok", op: "eq", value: true }],
+      metrics: [], noChangeTrap: false, rationale: "r", slice: 2,
+    }],
+    registry,
+  );
+  const r = report.results[0]!;
+  assert.equal(r.status, "pass");
+  assert.ok(r.costUsd > 0, "measured provider cost must flow into the case result");
+  assert.equal(r.costBreakdown.length, 1);
+  assert.equal(r.costBreakdown[0]!.source, "llm:fake-llm-1");
+  assert.equal(report.metrics.costUsd, r.costUsd);
+});
+
+test("a case that uses no provider measures exactly zero cost", async () => {
+  const registry: SutRegistry = { "noop.example": async () => ({ ok: true }) };
+  const report = await runCases(
+    [{
+      id: "noop-case", title: "t", kind: "adversarial", sut: "noop.example", input: {},
+      expect: [{ path: "ok", op: "eq", value: true }],
+      metrics: [], noChangeTrap: false, rationale: "r", slice: 2,
+    }],
+    registry,
+  );
+  const r = report.results[0]!;
+  assert.equal(r.costUsd, 0);
+  assert.deepEqual(r.costBreakdown, []);
+});
+
 test("sutRegistry handlers reject malformed input with an error, not a crash", async () => {
-  await assert.rejects(sutRegistry["time.dayRange"]!({ date: "not-a-date", tz: "UTC" }));
-  await assert.rejects(sutRegistry["episode.recall"]!({ date: "2026-11-03", tz: "UTC", episodes: [{}] }));
+  await assert.rejects(sutRegistry["time.dayRange"]!({ date: "not-a-date", tz: "UTC" }, new UsageCollector()));
+  await assert.rejects(sutRegistry["episode.recall"]!({ date: "2026-11-03", tz: "UTC", episodes: [{}] }, new UsageCollector()));
 });
 
 test("episode.recall handler returns interpreted-as echo with UTC bounds", async () => {
@@ -132,7 +176,7 @@ test("episode.recall handler returns interpreted-as echo with UTC bounds", async
         source: "chat", createdAt: "2026-11-03T10:00:00.000Z",
       },
     ],
-  })) as { interpretedAs: { fromUtc: string; toUtc: string }; episodes: { id: string }[] };
+  }, new UsageCollector())) as { interpretedAs: { fromUtc: string; toUtc: string }; episodes: { id: string }[] };
   assert.equal(out.interpretedAs.fromUtc, "2026-11-03T00:00:00.000Z");
   assert.equal(out.interpretedAs.toUtc, "2026-11-04T00:00:00.000Z");
   assert.deepEqual(out.episodes.map((e) => e.id), ["e1"]);

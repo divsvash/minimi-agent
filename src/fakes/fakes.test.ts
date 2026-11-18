@@ -80,7 +80,7 @@ test("FakeEmbeddingProvider is stable and dimension-sized", async () => {
 test("FakeResearchProvider scripts the verdict matrix deterministically", async () => {
   const r = new FakeResearchProvider({ now: () => new Date("2026-11-19T00:00:00.000Z") });
   r.enqueue(researchFixtures.verifiedUnchanged("$49/month", "https://acme.example/pricing"));
-  r.enqueue(researchFixtures.changed("$49/month", "$59/month", "https://acme.example/pricing"));
+  r.enqueue(researchFixtures.changed("$59/month", "https://acme.example/pricing"));
   r.enqueue(researchFixtures.emptyResults());
   r.enqueue(researchFixtures.staleSource("2026-06-01T00:00:00.000Z", "https://acme.example/pricing"));
   r.enqueue(researchFixtures.conflictingSources("https://a.example", "https://b.example"));
@@ -118,4 +118,17 @@ test("InMemoryEpisodeStore semantics match the Slice 1 contract (verbatim, order
   const items = await s.byOccurredRange(new Date("2026-11-03T00:00:00.000Z"), new Date("2026-11-04T00:00:00.000Z"));
   assert.deepEqual(items.map((e) => e.id), ["a", "b"]);
   assert.equal(items[0]!.text, "first");
+});
+
+test("InMemoryEpisodeStore: invalid range (from >= to) returns empty, never throws", async () => {
+  const { InMemoryEpisodeStore } = await import("./memoryEpisodeStore.js");
+  const s = new InMemoryEpisodeStore();
+  const mk = (id: string, seq: number, occurredAt: string) => ({
+    id, externalId: `x-${id}`, sessionId: "s", seq, role: "user" as const, text: id,
+    occurredAt, precision: "second" as const, tz: "UTC", source: "chat" as const, createdAt: occurredAt,
+  });
+  s.seed([mk("a", 0, "2026-11-03T09:00:00.000Z")]);
+  const same = new Date("2026-11-03T00:00:00.000Z");
+  assert.deepEqual(await s.byOccurredRange(same, same), []);
+  assert.deepEqual(await s.byOccurredRange(new Date("2026-11-04T00:00:00.000Z"), new Date("2026-11-03T00:00:00.000Z")), []);
 });

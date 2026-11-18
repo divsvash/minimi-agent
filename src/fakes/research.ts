@@ -11,6 +11,10 @@ export type ResearchScript =
  * (or a single repeating default). No network. Supports the failure modes the
  * verdict matrix cares about: empty results, fetch errors, conflicting sources,
  * dimension mismatch, stale sources.
+ *
+ * IMPORTANT: this fake scripts verdicts; it does not compute them. Passing tests
+ * here demonstrate consumer behavior under scripted outcomes, never verdict-rule
+ * correctness (slice 7).
  */
 export class FakeResearchProvider implements ResearchProvider {
   readonly calls: { attribute: string; entity: string }[] = [];
@@ -73,7 +77,13 @@ export class FakeResearchProvider implements ResearchProvider {
   }
 }
 
-/** Convenience constructors for the recurring verdict fixtures. */
+/**
+ * Recurring scripted verdict fixtures for testing CONSUMERS of ResearchProvider.
+ * These do NOT verify the change-detection/verdict engine — they are canned outputs.
+ * Verdict-rule correctness (baseline/current observations, authority, freshness,
+ * conflicts, dimension comparability) belongs to Slice 7 and will be tested there
+ * against ComparisonOutcome and the four-verdict precedence rules.
+ */
 export const researchFixtures = {
   /** Comparable + equal + authoritative + fresh. */
   verifiedUnchanged(value: string | number | boolean, source: string): Extract<ResearchScript, { kind: "outcome" }> {
@@ -91,9 +101,8 @@ export const researchFixtures = {
       },
     };
   },
-  /** Comparable + differs + authoritative + fresh. */
-  changed(before: string | number | boolean, after: string | number | boolean, source: string): Extract<ResearchScript, { kind: "outcome" }> {
-    void before;
+  /** Comparable + differs + authoritative + fresh. (Baseline/before lives with the caller — the provider fake has no baseline to compare.) */
+  changed(after: string | number | boolean, source: string): Extract<ResearchScript, { kind: "outcome" }> {
     return {
       kind: "outcome",
       outcome: {

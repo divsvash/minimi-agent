@@ -13,7 +13,10 @@ import type {
 
 export interface EpisodeStore {
   byId(id: string): Promise<Episode | null>;
-  /** Half-open [from, to) UTC range; Episode.occurredAt is always UTC. */
+  /** Half-open [from, to) UTC range; Episode.occurredAt is always UTC.
+   *  `from` MUST precede `to`. An invalid range (from >= to) is NOT an error —
+   *  it yields an empty result, consistent with the Neo4j implementation
+   *  (a `>= from AND occurredAt < to` predicate can match nothing). */
   byOccurredRange(from: Date, to: Date, role?: EpisodeRole): Promise<Episode[]>;
   /** Synchronous-with-writes full-text search (ADR-011). */
   search(text: string): Promise<Episode[]>;
@@ -28,11 +31,21 @@ export interface EnqueueOptions {
 
 /**
  * Fenced job ledger (ADR-010). `TX` is the store-transaction handle: Neo4j binds it
- * to ManagedTransaction; fakes bind it to an in-memory context. All durable outputs
- * commit only inside a transaction re-validating (status, claimGeneration, lease) —
+ * to ManagedTransaction; fakes bind it to an in-memory context.
+ *
+ * TX is a SINGLE-USE, OPAQUE CAPABILITY, not a general store handle:
+ *   - valid only for the duration of the commitFencedOutput callback;
+ *   - must not be stored, captured for later use, or used after the callback settles —
+ *     stores must reject such use (Neo4j does: the transaction is closed and every
+ *     statement fails). A TX that outlives its callback is not a fence and voids the
+ *     exactly-one-winner guarantee;
+ *   - it exists so durable outputs commit inside the SAME transaction that re-validates
+ *     (status, claimGeneration, lease) — it grants no capability the fence does not
+ *     already cover, and callers get no other route from it back to the store.
+ * All durable outputs commit only inside a transaction re-validating (status, claimGeneration, lease) —
  * callers cannot bypass the fence through this interface.
  */
-export interface JobRepository<TX = unknown> {
+export interface JobRepository<TX extends object = object> {
   enqueue(kind: string, payload: unknown, idempotencyKey: string, opts?: EnqueueOptions): Promise<string>;
   claimNext(workerId: string): Promise<Job | null>;
   renewLease(jobId: string, claimGeneration: number, workerId: string): Promise<boolean>;
@@ -164,6 +177,9 @@ export interface ResearchOutcome {
   current?: Observation | null;
 }
 
+/** ResearchProvider ships data shapes only. Verdict-rule correctness
+ *  (comparability, authority, freshness, conflicts) is specified and tested in
+ *  slice 7's verdict engine — NOT by the fake fixtures in src/fakes/research.ts. */
 export interface ResearchProvider {
   /** Captures an observation (or records why it could not). Never auto-rewrites claims (ADR-009). */
   observe(request: {

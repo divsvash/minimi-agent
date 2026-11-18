@@ -11,7 +11,8 @@ const base = (over: Partial<CaseResult>): CaseResult => ({
   noChangeTrap: over.noChangeTrap ?? false,
   latencyMs: over.latencyMs ?? 1,
   costUsd: over.costUsd ?? 0,
-  assertions: [],
+  costBreakdown: over.costBreakdown ?? [],
+  assertions: over.assertions ?? [],
   summary: "s",
   ...over,
 });
@@ -28,13 +29,34 @@ test("pass rates computed per metric tag over executed cases only", () => {
   assert.equal(m.citationCoverage, null); // no executed case tagged it
 });
 
-test("false-unchanged violations count only executed no-change-trap failures", () => {
-  const m = computeMetrics([
-    base({ id: "trap-pass", noChangeTrap: true, status: "pass" }),
-    base({ id: "trap-fail", noChangeTrap: true, status: "fail" }),
-    base({ id: "trap-pending", noChangeTrap: true, status: "pending" }),
-  ]);
-  assert.equal(m.falseUnchangedViolations, 1);
+test("false-unchanged violations require the SYSTEM to claim verified_unchanged — unrelated failures don't count", () => {
+  const trapWithUnrelatedFailure = base({
+    id: "trap-citation-fail",
+    noChangeTrap: true,
+    status: "fail",
+    assertions: [
+      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "no_change_found", pass: true },
+      { path: "report.citations", op: "exists", actual: undefined, pass: false, message: "citation missing" },
+    ],
+  });
+  const systemClaimsUnchanged = base({
+    id: "system-claims-unchanged",
+    noChangeTrap: true,
+    status: "fail",
+    assertions: [
+      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "verified_unchanged", pass: false, message: "expected verdict != verified_unchanged" },
+    ],
+  });
+  const changeFactsButUnchanged = base({
+    id: "change-facts-but-unchanged", // not flagged as a trap case at all
+    noChangeTrap: false,
+    status: "fail",
+    assertions: [
+      { path: "verdict", op: "eq", value: "changed", actual: "verified_unchanged", pass: false, message: "expected verdict = changed" },
+    ],
+  });
+  const m = computeMetrics([trapWithUnrelatedFailure, systemClaimsUnchanged, changeFactsButUnchanged]);
+  assert.equal(m.falseUnchangedViolations, 2, "unrelated trap-case failure must not count; both verdict-path unchanged claims must");
 });
 
 test("latency percentiles and cost over executed cases", () => {
