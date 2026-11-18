@@ -1,0 +1,134 @@
+import { createHash } from "node:crypto";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { performance } from "node:perf_hooks";
+import { GoldenCaseSchema, type GoldenCase } from "./goldenCase.js";
+import { applyAssertions } from "./matchers.js";
+import { computeMetrics, type CaseResult, type EvalMetrics } from "./metrics.js";
+
+export type SutHandler = (input: Record<string, unknown>) => Promise<unknown>;
+export type SutRegistry = Record<string, SutHandler>;
+
+export interface EvalReport {
+  results: CaseResult[];
+  metrics: EvalMetrics;
+  failures: number;
+}
+
+/** Load and schema-validate every *.json case in `dir`. Throws on any invalid case. */
+export async function loadCases(dir: string): Promise<GoldenCase[]> {
+  const files = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort();
+  const cases: GoldenCase[] = [];
+  for (const file of files) {
+    const raw: unknown = JSON.parse(await readFile(join(dir, file), "utf8"));
+    const parsed = GoldenCaseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`golden case ${file} failed validation: ${parsed.error.message}`);
+    }
+    cases.push(parsed.data);
+  }
+  const ids = new Set<string>();
+  for (const c of cases) {
+    if (ids.has(c.id)) throw new Error(`duplicate golden case id: ${c.id}`);
+    ids.add(c.id);
+  }
+  return cases;
+}
+
+/** sha256 of each file under `dir`, keyed by forward-slash relative path. Deterministic. */
+export async function computeTreeHash(dir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const abs = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(out, await computeTreeHash(abs));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const hash = createHash("sha256").update(await readFile(abs)).digest("hex");
+    out[relative(dir, abs).replaceAll("\\", "/")] = hash;
+  }
+  return out;
+}
+
+export interface DriftResult {
+  ok: boolean;
+  mismatched: string[];
+  missing: string[];
+  added: string[];
+}
+
+export async function checkDrift(dir: string, lockFile: string): Promise<DriftResult> {
+  let lock: { files: Record<string, string> };
+  try {
+    lock = JSON.parse(await readFile(lockFile, "utf8")) as { files: Record<string, string> };
+  } catch {
+    return { ok: false, mismatched: [], missing: [], added: ["<lock file missing or unreadable>"] };
+  }
+  const current = await computeTreeHash(dir);
+  const lockFiles = lock.files ?? {};
+  const mismatched = Object.keys(lockFiles).filter((k) => current[k] !== undefined && current[k] !== lockFiles[k]);
+  const missing = Object.keys(lockFiles).filter((k) => current[k] === undefined);
+  const added = Object.keys(current).filter((k) => lockFiles[k] === undefined);
+  return { ok: mismatched.length === 0 && missing.length === 0 && added.length === 0, mismatched, missing, added };
+}
+
+export async function bless(dir: string, lockFile: string): Promise<void> {
+  const files = await computeTreeHash(dir);
+  const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)));
+  await writeFile(lockFile, JSON.stringify({ algorithm: "sha256", files: sorted }, null, 2) + "\n", "utf8");
+}
+
+const pendingLatency = 0;
+
+async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult> {
+  const handler = c.sut ? registry[c.sut] : undefined;
+  const base = {
+    id: c.id,
+    scenario: c.scenario,
+    kind: c.kind,
+    slice: c.slice,
+    metrics: c.metrics,
+    noChangeTrap: c.noChangeTrap,
+    assertions: [],
+    costUsd: 0,
+  };
+  if (!handler) {
+    return {
+      ...base,
+      status: "pending",
+      latencyMs: pendingLatency,
+      summary: c.sut ? `SUT '${c.sut}' not registered (arrives in slice ${c.slice})` : `declarative case (arrives in slice ${c.slice})`,
+    };
+  }
+  const t0 = performance.now();
+  try {
+    const output = await handler(c.input ?? {});
+    const assertions = applyAssertions(output, c.expect);
+    const latencyMs = performance.now() - t0;
+    const failed = assertions.filter((a) => !a.pass);
+    return {
+      ...base,
+      status: failed.length === 0 ? "pass" : "fail",
+      latencyMs,
+      assertions,
+      summary: failed.length === 0 ? "ok" : `${failed.length}/${assertions.length} assertions failed: ${failed.map((a) => `${a.path} ${a.op}`).join(", ")}`,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      status: "fail",
+      latencyMs: performance.now() - t0,
+      error: err instanceof Error ? err.message : String(err),
+      summary: `SUT threw: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+export async function runCases(cases: GoldenCase[], registry: SutRegistry): Promise<EvalReport> {
+  const results: CaseResult[] = [];
+  for (const c of cases) results.push(await runCase(c, registry)); // deterministic, sequential — no shared state
+  const metrics = computeMetrics(results);
+  return { results, metrics, failures: metrics.failed };
+}

@@ -35,6 +35,10 @@ export interface LedgerConfig {
 export interface LedgerTestHooks {
   /** Called inside the fenced transaction AFTER the fence passes, BEFORE any write. */
   afterFenceCheck?: () => Promise<void>;
+  /** Called inside sweep() AFTER the expired-job scan completes, BEFORE the per-job
+   *  lock+recheck transactions are attempted. Lets tests coordinate on exactly the
+   *  point where the sweeper contends on a Job lock. */
+  afterSweepScan?: () => Promise<void> | void;
 }
 
 const DEFAULTS: LedgerConfig = { leaseSeconds: 120, sweepIntervalMs: 30_000 };
@@ -387,6 +391,7 @@ export class JobLedger {
       await read.close();
     }
     let requeued = 0;
+    await this.testHooks?.afterSweepScan?.(); // test barrier: scan done, about to contend on locks
     for (const id of expiredIds) {
       const s = newSession(this.driver, "WRITE");
       try {
