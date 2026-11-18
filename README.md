@@ -3,7 +3,7 @@
 Minimi is a conversational agent built around persistent memory rather than disposable chat history. Its first implementation provides atomic episode ingestion, timezone-aware recall, full-text search and a fenced background job ledger. 
 Start here: **[DESIGN.md](DESIGN.md)** (one page) · full reference: **[docs/architecture.md](docs/architecture.md)** · decisions: **[docs/decisions/](docs/decisions/)**
 
-## Status: Slice 1 shipped & verified; Slices 2–11 planned
+## Status: Slice 2 shipped (contracts, fakes & eval harness); Slices 3—11 planned
 
 Working & tested: Episode persistence (verbatim, atomic with outbox job), idempotent ingest (upstream `messageId` preferred; content-addressed fallback), per-session sequence guard with `(sessionId, seq)` uniqueness, day-scoped tz-aware verbatim recall with "interpreted as" echo, synchronous full-text search, and the Neo4j job ledger — fenced claiming, fenced output commits, provisional outputs, sweeper, replay reconciler.
 
@@ -30,6 +30,7 @@ npm run dev          # runs migrations, serves on :3000, starts the sweeper
 ```bash
 npm run test:unit          # offline (tz math, id hashing)
 npm run test:integration   # boots pinned Neo4j; suite is serialized cross-process (Community edition = one DB)
+npm run eval              # offline eval harness: golden cases, drift check, exits non-zero on failure
 ```
 The claim race is a hard gate: 8 racing workers × 24 jobs → exactly-once claim; stale-generation completion, stale output writes, and provisional promotion/reaping are all covered; concurrent-ingest `(sessionId, seq)` uniqueness is covered.
 
