@@ -1,0 +1,15 @@
+{
+  "id": "adv-missing-baseline",
+  "title": "No baseline observation on file ? system must not assert change or non-change",
+  "kind": "adversarial",
+  "question": "Has Acme CRM's pricing changed?",
+  "expect": [
+    { "path": "verdict", "op": "oneOf", "value": ["no_change_found", "insufficient_evidence"], "description": "absence of a baseline never licenses a verdict about change" },
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged" },
+    { "path": "verdict", "op": "neq", "value": "changed" }
+  ],
+  "metrics": ["false_unchanged"],
+  "noChangeTrap": true,
+  "rationale": "When no baseline observation exists, any change-verdict (in either direction) is fabricated; the only honest outputs are no_change_found (with reason) or insufficient_evidence.",
+  "slice": 8
+}

@@ -1,0 +1,28 @@
+{
+  "id": "adv-recall-excludes-adjacent-days-tokyo",
+  "title": "Day boundary respects the requested timezone (Tokyo)",
+  "kind": "adversarial",
+  "question": "What did I ask on 3 November (Tokyo time)?",
+  "sut": "episode.recall",
+  "input": {
+    "date": "2026-11-03",
+    "tz": "Asia/Tokyo",
+    "episodes": [
+      { "id": "ep-t1", "externalId": "x-t1", "sessionId": "s1", "seq": 0, "role": "user", "text": "one second BEFORE the Tokyo day began", "occurredAt": "2026-11-02T14:59:59.000Z", "precision": "second", "tz": "Asia/Tokyo", "source": "chat", "createdAt": "2026-11-02T14:59:59.000Z" },
+      { "id": "ep-t2", "externalId": "x-t2", "sessionId": "s1", "seq": 1, "role": "user", "text": "first instant OF the Tokyo day", "occurredAt": "2026-11-02T15:00:00.000Z", "precision": "second", "tz": "Asia/Tokyo", "source": "chat", "createdAt": "2026-11-02T15:00:00.000Z" },
+      { "id": "ep-t3", "externalId": "x-t3", "sessionId": "s1", "seq": 2, "role": "user", "text": "last instant of the Tokyo day", "occurredAt": "2026-11-03T14:59:59.000Z", "precision": "second", "tz": "Asia/Tokyo", "source": "chat", "createdAt": "2026-11-03T14:59:59.000Z" },
+      { "id": "ep-t4", "externalId": "x-t4", "sessionId": "s1", "seq": 3, "role": "user", "text": "first instant AFTER the Tokyo day ended", "occurredAt": "2026-11-03T15:00:00.000Z", "precision": "second", "tz": "Asia/Tokyo", "source": "chat", "createdAt": "2026-11-03T15:00:00.000Z" }
+    ]
+  },
+  "expect": [
+    { "path": "interpretedAs.fromUtc", "op": "eq", "value": "2026-11-02T15:00:00.000Z" },
+    { "path": "interpretedAs.toUtc", "op": "eq", "value": "2026-11-03T15:00:00.000Z" },
+    { "path": "episodes", "op": "length", "value": 2 },
+    { "path": "episodes.0.id", "op": "eq", "value": "ep-t2" },
+    { "path": "episodes.1.id", "op": "eq", "value": "ep-t3" }
+  ],
+  "metrics": ["historical_recall", "temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "Off-by-one at the half-open day boundary is the classic recall bug; Tokyo (UTC+9) inverts the UTC calendar order relative to Lisbon.",
+  "slice": 2
+}

@@ -1,0 +1,14 @@
+{
+  "id": "adv-superseded-not-current",
+  "title": "A superseded statement must never be served as current",
+  "kind": "adversarial",
+  "question": "What is the Acme CRM monthly price for the Team plan?",
+  "expect": [
+    { "path": "statements.0.id", "op": "eq", "value": "st-current", "description": "the superseding statement, not the superseded one" },
+    { "path": "statements.0.status", "op": "eq", "value": "active" }
+  ],
+  "metrics": ["historical_recall", "temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "ADR-004/ADR-005: current-state reads must traverse SUPERSEDES/SUPERSEDED_BY chains; serving the stale value is a temporal-correctness failure even if it matches the newest recorded text verbatim.",
+  "slice": 5
+}

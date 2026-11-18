@@ -1,0 +1,13 @@
+{
+  "id": "adv-uncited-claims-rejected",
+  "title": "Every material claim in an answer must carry a citation",
+  "kind": "adversarial",
+  "question": "Summarize what we know about Acme CRM pricing.",
+  "expect": [
+    { "path": "uncitedClaims", "op": "length", "value": 0, "description": "claims without evidence spans are a hard failure, not a warning" }
+  ],
+  "metrics": ["citation_coverage"],
+  "noChangeTrap": false,
+  "rationale": "Provenance is non-negotiable (?1.3): a synthesized answer with an uncited material claim fails citation coverage even if every cited claim is accurate.",
+  "slice": 6
+}

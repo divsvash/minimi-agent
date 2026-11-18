@@ -1,0 +1,16 @@
+{
+  "id": "b-postgres-advice-still-correct",
+  "title": "Historical answer verification: Postgres hosting advice from 3 Nov (Example B)",
+  "scenario": "B",
+  "kind": "scenario",
+  "question": "Is the Postgres self-hosting advice I got on 3 November still right?",
+  "expect": [
+    { "path": "verdict", "op": "exists" },
+    { "path": "perClaimStatuses", "op": "exists", "description": "every volatile claim gets its own status, never one blanket verdict" },
+    { "path": "report.citations", "op": "exists", "description": "each material claim cites capture-dated evidence" }
+  ],
+  "metrics": ["citation_coverage"],
+  "noChangeTrap": false,
+  "rationale": "Verification must re-check each volatile claim against current, dimension-comparable, authoritative, fresh observations ? and say what remains unverifiable rather than imply certainty.",
+  "slice": 8
+}

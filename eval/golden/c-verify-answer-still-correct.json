@@ -1,0 +1,16 @@
+{
+  "id": "c-verify-answer-still-correct",
+  "title": "Example C end-to-end: recall then re-verification of the 3 Nov answer",
+  "scenario": "C",
+  "kind": "scenario",
+  "question": "What did I ask on 3 November, and is the answer still correct?",
+  "expect": [
+    { "path": "recalled", "op": "exists", "description": "step 1: verbatim turns from 2026-11-03 with interpreted-as echo" },
+    { "path": "verdict", "op": "exists", "description": "step 2: per-claim verification verdict" },
+    { "path": "report.citations", "op": "exists" }
+  ],
+  "metrics": ["historical_recall", "citation_coverage"],
+  "noChangeTrap": false,
+  "rationale": "The challenge's hardest case: recall must be byte-verbatim AND verification must be honest about what changed, what held, and what could not be checked.",
+  "slice": 8
+}

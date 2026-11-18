@@ -1,0 +1,15 @@
+{
+  "id": "adv-tz-kolkata-half-offset",
+  "title": "Half-hour UTC offset day boundary (Asia/Kolkata)",
+  "kind": "adversarial",
+  "sut": "time.dayRange",
+  "input": { "date": "2026-11-03", "tz": "Asia/Kolkata" },
+  "expect": [
+    { "path": "fromUtc", "op": "eq", "value": "2026-11-02T18:30:00.000Z" },
+    { "path": "toUtc", "op": "eq", "value": "2026-11-03T18:30:00.000Z" }
+  ],
+  "metrics": ["temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "UTC+05:30 is not a whole-hour offset; naive hour arithmetic shifts the boundary by 30 minutes.",
+  "slice": 2
+}

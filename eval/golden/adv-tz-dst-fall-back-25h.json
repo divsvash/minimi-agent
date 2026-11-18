@@ -1,0 +1,15 @@
+{
+  "id": "adv-tz-dst-fall-back-25h",
+  "title": "DST fall-back day is 25 hours (Europe/Lisbon 2026-10-25)",
+  "kind": "adversarial",
+  "sut": "time.dayRange",
+  "input": { "date": "2026-10-25", "tz": "Europe/Lisbon" },
+  "expect": [
+    { "path": "fromUtc", "op": "eq", "value": "2026-10-24T23:00:00.000Z" },
+    { "path": "toUtc", "op": "eq", "value": "2026-10-26T00:00:00.000Z" }
+  ],
+  "metrics": ["temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "The local day containing the 25-hour DST transition must be computed with DST-aware bounds, not 24h arithmetic.",
+  "slice": 2
+}

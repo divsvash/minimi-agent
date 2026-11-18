@@ -1,0 +1,16 @@
+{
+  "id": "adv-changed-facts-pricing",
+  "title": "Changed pricing must be reported as changed, with sources",
+  "scenario": "B",
+  "kind": "adversarial",
+  "question": "Has the Acme CRM Team-plan pricing changed since the baseline we recorded?",
+  "expect": [
+    { "path": "verdict", "op": "eq", "value": "changed" },
+    { "path": "report.current.value", "op": "exists" },
+    { "path": "report.baseline.value", "op": "exists" }
+  ],
+  "metrics": ["citation_coverage"],
+  "noChangeTrap": false,
+  "rationale": "Q3 change detection: a genuinely different, dimension-comparable, authoritative, fresh observation must produce verdict=changed ? never smoothed into 'unchanged' or averaged.",
+  "slice": 8
+}

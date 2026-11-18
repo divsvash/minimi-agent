@@ -1,0 +1,15 @@
+{
+  "id": "adv-dimension-mismatch-never-differenced",
+  "title": "Monthly vs annual billing ? comparison refused, never differenced",
+  "kind": "adversarial",
+  "question": "Did Acme CRM pricing go up before the baseline renewal?",
+  "expect": [
+    { "path": "comparison.verdict", "op": "eq", "value": "dimension_mismatch" },
+    { "path": "comparison.mismatchedKeys", "op": "includes", "value": "billingPeriod" },
+    { "path": "verdict", "op": "neq", "value": "changed", "description": "incomparable dimensions can never license a change verdict" }
+  ],
+  "metrics": ["false_unchanged"],
+  "noChangeTrap": true,
+  "rationale": "?6.3: monthly vs annual pricing is the canonical dimension trap; values are shown side-by-side with mismatchedKeys, never differenced, and ComparisonOutcome never licenses a verdict.",
+  "slice": 7
+}

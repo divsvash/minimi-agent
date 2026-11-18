@@ -1,0 +1,17 @@
+{
+  "id": "a-crm-shortlist-decision-recall",
+  "title": "Decision recall: CRM shortlist for the 20-person sales team (Example A)",
+  "scenario": "A",
+  "kind": "scenario",
+  "question": "Which CRMs did I shortlist for a 20-person sales team?",
+  "expect": [
+    { "path": "claims", "op": "length", "value": 5, "description": "exactly the five shortlisted CRMs, attributed and dated" },
+    { "path": "claims.0.modality", "op": "eq", "value": "shortlisted" },
+    { "path": "claims.0.epistemicStatus", "op": "eq", "value": "user_asserted" },
+    { "path": "evidence", "op": "exists", "description": "every claim carries episode-span evidence" }
+  ],
+  "metrics": ["historical_recall", "citation_coverage"],
+  "noChangeTrap": false,
+  "rationale": "Q4 deterministic decision recall must return exactly the five shortlisted CRMs with modality/epistemic status and evidence spans; no invented or decayed candidates.",
+  "slice": 8
+}

@@ -1,0 +1,15 @@
+{
+  "id": "adv-stale-source-not-unchanged",
+  "title": "A stale page cannot support 'verified unchanged'",
+  "kind": "adversarial",
+  "question": "Is the Acme CRM pricing we recorded in November still current?",
+  "expect": [
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged" },
+    { "path": "verdict", "op": "oneOf", "value": ["no_change_found", "insufficient_evidence", "changed"] },
+    { "path": "reason", "op": "eq", "value": "stale_source" }
+  ],
+  "metrics": ["false_unchanged", "citation_coverage"],
+  "noChangeTrap": true,
+  "rationale": "Freshness derives from source-declared dates, never fetch time; a page whose declared effective date has moved outside the freshness window degrades the verdict to no_change_found(reason=stale_source).",
+  "slice": 8
+}
