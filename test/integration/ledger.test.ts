@@ -190,8 +190,14 @@ test("concurrent: stale output writer racing the reclaim path — stale side nev
 });
 
 test("TOCTOU: paused worker holding the Job lock — the real sweeper blocks on the lock, then reclaims after commit", async () => {
-  // 1-second lease so it lapses naturally WHILE the fenced transaction is paused
-  const shortLedger = new JobLedger(ctx.driver, { leaseSeconds: 1, sweepIntervalMs: 30_000 });
+  // 1-second lease so it lapses naturally WHILE the fenced transaction is paused.
+  // The afterSweepScan barrier signals the exact point where the sweeper finished
+  // its expired-job scan and is about to contend on the Job lock.
+  let sweepScanComplete!: () => void;
+  const sweepScanDone = new Promise<void>((r) => (sweepScanComplete = r));
+  const shortLedger = new JobLedger(ctx.driver, { leaseSeconds: 1, sweepIntervalMs: 30_000 }, {
+    afterSweepScan: () => sweepScanComplete(),
+  });
   const jobId = await ledger.enqueue("noop", { t: "toctou-a" }, "toctou:1");
   const j1 = await shortLedger.claimNext("w1");
   const gen1 = j1!.claimGeneration;
@@ -210,7 +216,7 @@ test("TOCTOU: paused worker holding the Job lock — the real sweeper blocks on 
     },
   });
 
-  const staleWrite = gatedLedger.commitFencedOutput(jobId, gen1, "w1", (tx) =>
+  const fencedWrite = gatedLedger.commitFencedOutput(jobId, gen1, "w1", (tx) =>
     tx.run("CREATE (o:JobOutput {jobId: $jobId, claimGeneration: $gen, marker: 'stale'})", { jobId, gen: gen1 }),
   );
 
@@ -246,6 +252,9 @@ test("TOCTOU: paused worker holding the Job lock — the real sweeper blocks on 
   // must queue behind the paused writer's write lock.
   const sweepStarted = Date.now();
   const sweepPromise = shortLedger.sweep();
+  // barrier: sweeper completed its expired-job scan and is about to acquire the Job lock —
+  // coordinate on this instead of inferring progress from elapsed time
+  await sweepScanDone;
   const early = await Promise.race([
     sweepPromise.then(() => "done" as const),
     new Promise<"pending">((r) => setTimeout(() => r("pending"), 300)),
@@ -253,7 +262,7 @@ test("TOCTOU: paused worker holding the Job lock — the real sweeper blocks on 
   assert.equal(early, "pending", "sweep must wait on the paused writer's lock — it cannot requeue around it");
 
   releaseWorker(); // let the paused writer finish its fenced transaction
-  await staleWrite; // serialized ownership: fence passed before expiry, lock held → commits exactly once
+  await fencedWrite; // serialized ownership: fence passed before expiry, lock held → commits exactly once
 
   const sweepResult = await sweepPromise;
   const blockedMs = Date.now() - sweepStarted;

@@ -2,7 +2,7 @@ import type { Driver } from "neo4j-driver";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { open, stat, utimes, writeFile, readFile, rm, type FileHandle } from "node:fs/promises";
+import { open, stat, utimes, writeFile, readFile, rm, rename, link, type FileHandle } from "node:fs/promises";
 import { createDriver, neo4jConfigFromEnv, newSession } from "../../src/interfaces/neo4j.js";
 import { migrate } from "../../src/memory/migrate.js";
 
@@ -68,13 +68,60 @@ async function staleSnapshot(): Promise<{ stale: boolean; raw: string | null }> 
   return { stale: mtimeAge > STALE_MS, raw };
 }
 
+/**
+ * Atomic ownership handoff: rename(2)/MoveFile is atomic on the same filesystem,
+ * so after the rename succeeds THIS process holds the only reference to those exact
+ * bytes. Deletion or restoration is decided on the quarantined copy — a check and a
+ * remove on the shared path are never performed as two separate steps.
+ * Returns null when the lock path is already gone.
+ */
+async function quarantineLock(): Promise<{ quarantine: string; raw: string | null } | null> {
+  const quarantine = `${LOCK_PATH}.quarantine-${process.pid}-${randomUUID()}`;
+  try {
+    await rename(LOCK_PATH, quarantine);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null; // already gone
+    throw err;
+  }
+  let raw: string | null = null;
+  try {
+    raw = await readFile(quarantine, "utf8");
+  } catch {
+    raw = null; // unreadable — caller decides (restore, never delete blindly)
+  }
+  return { quarantine, raw };
+}
+
+/** Put back a quarantined lock this process does NOT own. Restoration uses a hard
+ *  link, which fails atomically with EEXIST if a replacement owner already took the
+ *  path — the replacement is never clobbered. */
+async function restoreQuarantinedLock(quarantine: string): Promise<void> {
+  try {
+    await link(quarantine, LOCK_PATH);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      // LOCK_PATH is held by a replacement owner; the quarantined bytes are obsolete.
+    } else {
+      // Cannot restore atomically — leave the uniquely named copy rather than destroy it.
+      console.warn(`unable to restore quarantined integration-suite lock ${quarantine}: ${String(err)}`);
+      return;
+    }
+  }
+  await rm(quarantine, { force: true });
+}
+
 /** Remove the lock only if it is still byte-identical to the stale snapshot we judged —
- *  never delete a replacement owner's fresh lock. */
+ *  the rename in quarantineLock() is the atomic point that makes this safe. */
 async function rmIfUnchanged(snapshot: string | null): Promise<boolean> {
-  const current = await readLockSnapshot();
-  if (current !== snapshot) return false;
-  await rm(LOCK_PATH, { force: true });
-  return true;
+  const qu = await quarantineLock();
+  if (!qu) return true; // vanished — free to take
+  if (qu.raw === snapshot) {
+    await rm(qu.quarantine, { force: true });
+    return true;
+  }
+  await restoreQuarantinedLock(qu.quarantine);
+  return false;
 }
 
 /**
@@ -130,24 +177,31 @@ async function acquireIntegrationLock(): Promise<void> {
   }
 }
 
-/** Remove the shared lock path only if it still carries THIS process's token —
- *  a process that lost ownership must never delete a replacement owner's lock. */
+/** Remove the shared lock only if it still carries THIS process's token — decided on the
+ *  atomically quarantined copy, so a replacement owner's lock is never deleted. */
 async function removeLockIfOurs(): Promise<void> {
   if (!lockToken) return;
-  try {
-    const raw = await readFile(LOCK_PATH, "utf8");
-    const parsed = JSON.parse(raw) as { token?: unknown };
-    // Valid JSON carrying someone else's token → replacement owner, never touch it.
-    // Unparseable content → almost certainly our own partial write (a replacement
-    // owner always writes valid JSON), so removing is safe.
-    if (typeof parsed.token === "string" && parsed.token !== lockToken) return;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return; // already gone — nothing to remove
-    if (!(err instanceof SyntaxError)) return; // unreadable for other reasons — leave it
-    // SyntaxError: fall through and remove our partial write
+  const qu = await quarantineLock();
+  if (!qu) return; // already gone — nothing to remove
+  let ours = false;
+  if (qu.raw !== null) {
+    try {
+      const parsed = JSON.parse(qu.raw) as { token?: unknown };
+      // Valid JSON carrying someone else's token ⇒ replacement owner, never touch it.
+      // Valid JSON with our token (or no token — cannot be a replacement's) ⇒ ours.
+      ours = !(typeof parsed.token === "string" && parsed.token !== lockToken);
+    } catch (err) {
+      // Unparseable ⇒ almost certainly our own partial write (a replacement owner
+      // always writes valid JSON), so removing is safe. Anything else ⇒ restore.
+      ours = err instanceof SyntaxError;
+    }
   }
-  await rm(LOCK_PATH, { force: true });
+  // raw === null (unreadable) ⇒ restore, never delete blindly.
+  if (ours) {
+    await rm(qu.quarantine, { force: true });
+  } else {
+    await restoreQuarantinedLock(qu.quarantine);
+  }
 }
 
 async function releaseIntegrationLock(): Promise<void> {
@@ -174,8 +228,11 @@ export async function freshDatabase(): Promise<TestContext> {
     driver = createDriver(neo4jConfigFromEnv());
     await migrate(neo4jConfigFromEnv(), driver);
     const session = newSession(driver, "WRITE");
-    await session.run("MATCH (n) WHERE NOT n:SchemaVersion DETACH DELETE n");
-    await session.close();
+    try {
+      await session.run("MATCH (n) WHERE NOT n:SchemaVersion DETACH DELETE n");
+    } finally {
+      await session.close();
+    }
     return { driver };
   } catch (err) {
     try {
