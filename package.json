@@ -15,6 +15,8 @@
     "memory:replay": "tsx src/jobs/replay.ts",
     "test": "tsx --test src/**/*.test.ts test/integration/*.test.ts",
     "test:unit": "tsx --test src/**/*.test.ts",
+    "eval": "tsx src/eval/run.ts",
+    "eval:bless": "tsx src/eval/run.ts --bless",
     "test:integration": "npm run db:up && tsx --test --test-concurrency=1 test/integration/*.test.ts"
   },
   "dependencies": {
