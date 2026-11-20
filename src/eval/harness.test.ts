@@ -34,6 +34,10 @@ test("pending cases are reported but never fail the run", async () => {
   assert.equal(report.results[0]!.status, "pending");
   assert.equal(report.failures, 0);
   assert.equal(report.metrics.recallCorrectness, null);
+  assert.equal(report.challenge.totalScenarios, 3);
+  assert.equal(report.challenge.executedCases, 0);
+  assert.equal(report.challenge.complete, false);
+  assert.equal(report.cost.basis, "not_measured");
 });
 
 let dir: string;
@@ -174,9 +178,12 @@ test("per-case usage/cost collector records actual provider cost", async () => {
   assert.equal(r.costBreakdown.length, 1);
   assert.equal(r.costBreakdown[0]!.source, "llm:fake-llm-1");
   assert.equal(report.metrics.costUsd, r.costUsd);
+  assert.equal(report.cost.basis, "measured");
+  assert.equal(report.cost.providerCalls, 1);
+  assert.equal(report.cost.casesWithProviderCalls, 1);
 });
 
-test("a case that uses no provider measures exactly zero cost", async () => {
+test("a case that invokes no provider records zero cost with no measured calls", async () => {
   const registry: SutRegistry = { "noop.example": async () => ({ ok: true }) };
   const report = await runCases(
     [{
@@ -189,6 +196,9 @@ test("a case that uses no provider measures exactly zero cost", async () => {
   const r = report.results[0]!;
   assert.equal(r.costUsd, 0);
   assert.deepEqual(r.costBreakdown, []);
+  assert.equal(report.cost.basis, "not_measured");
+  assert.equal(report.cost.providerCalls, 0);
+  assert.equal(report.cost.casesWithProviderCalls, 0);
 });
 
 test("sutRegistry handlers reject malformed input with an error, not a crash", async () => {

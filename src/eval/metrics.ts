@@ -25,8 +25,9 @@ export interface CaseResult {
   metrics: GoldenMetric[];
   noChangeTrap: boolean;
   latencyMs: number;
+  /** Recorded provider cost. Zero with an empty breakdown is unmeasured, not a measured zero. */
   costUsd: number;
-  /** Which providers the case actually used, and what they cost. Empty = no provider was used. */
+  /** Recorded provider usage entries. Empty = no provider call was recorded, not a free provider. */
   costBreakdown: readonly { source: string; usd: number }[];
   assertions: AssertionResult[];
   /** Set when the SUT threw instead of returning output. */
@@ -39,6 +40,8 @@ export interface LatencyStats { p50: number; p95: number; max: number }
 
 export interface EvalMetrics {
   total: number;
+  /** Cases that actually ran: passed + failed. */
+  executed: number;
   passed: number;
   failed: number;
   pending: number;
@@ -57,7 +60,7 @@ export interface EvalMetrics {
   falseUnchangedViolations: number;
   /** Executed (non-pending) cases' latency distribution. */
   latencyMs: LatencyStats;
-  /** Total provider cost across executed cases. */
+  /** Sum of recorded provider costs. See CostSummary.basis before treating this as measured. */
   costUsd: number;
 }
 
@@ -78,6 +81,7 @@ export function computeMetrics(results: CaseResult[]): EvalMetrics {
   const latencies = executed.map((r) => r.latencyMs).sort((a, b) => a - b);
   return {
     total: results.length,
+    executed: executed.length,
     passed: results.filter((r) => r.status === "pass").length,
     failed: results.filter((r) => r.status === "fail").length,
     pending: results.filter((r) => r.status === "pending").length,

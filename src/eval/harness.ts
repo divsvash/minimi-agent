@@ -5,12 +5,14 @@ import { performance } from "node:perf_hooks";
 import { GoldenCaseSchema, type GoldenCase } from "./goldenCase.js";
 import { applyAssertions } from "./matchers.js";
 import { computeMetrics, type CaseResult, type EvalMetrics } from "./metrics.js";
+import { summarizeCost, summarizeScenarios, type ChallengeSummary, type CostSummary } from "./summary.js";
 import { UsageCollector } from "./usage.js";
 
 /**
  * SUT handler signature. The second argument is a per-case usage/cost collector —
- * a handler that calls providers MUST record their cost through it; the harness
- * never fabricates a zero-cost result for a handler that used nothing.
+ * a handler that calls providers MUST record their cost through it. A handler that
+ * records nothing yields zero recorded cost with an empty breakdown; that is lack
+ * of measurement, not evidence that provider calls were free.
  */
 export type SutHandler = (input: Record<string, unknown>, usage: UsageCollector) => Promise<unknown>;
 export type SutRegistry = Record<string, SutHandler>;
@@ -18,6 +20,10 @@ export type SutRegistry = Record<string, SutHandler>;
 export interface EvalReport {
   results: CaseResult[];
   metrics: EvalMetrics;
+  /** A/B/C hiring-challenge coverage, separate from the overall case tally. */
+  challenge: ChallengeSummary;
+  /** Whether provider cost was measured or is unmeasured because no provider call was recorded. */
+  cost: CostSummary;
   failures: number;
 }
 
@@ -151,5 +157,11 @@ export async function runCases(cases: GoldenCase[], registry: SutRegistry): Prom
   const results: CaseResult[] = [];
   for (const c of cases) results.push(await runCase(c, registry)); // deterministic, sequential — no shared state
   const metrics = computeMetrics(results);
-  return { results, metrics, failures: metrics.failed };
+  return {
+    results,
+    metrics,
+    challenge: summarizeScenarios(results),
+    cost: summarizeCost(results),
+    failures: metrics.failed,
+  };
 }

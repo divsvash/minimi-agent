@@ -86,5 +86,6 @@ test("latency percentiles and cost over executed cases", () => {
   assert.equal(m.latencyMs.p50, 10);
   assert.equal(m.costUsd, 0.03);
   assert.equal(m.total, 3);
+  assert.equal(m.executed, 2);
   assert.equal(m.pending, 1);
 });

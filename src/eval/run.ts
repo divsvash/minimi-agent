@@ -41,7 +41,7 @@ export function parseArgs(argv: string[], cwd: string = process.cwd()): EvalCliO
   return opts;
 }
 
-function formatReport(report: EvalReport): string {
+export function formatReport(report: EvalReport): string {
   const lines: string[] = [];
   for (const r of report.results) {
     const mark = r.status === "pass" ? "PASS" : r.status === "fail" ? "FAIL" : "PEND";
@@ -54,14 +54,44 @@ function formatReport(report: EvalReport): string {
   }
   const m = report.metrics;
   const pct = (v: number | null) => (v === null ? "n/a (no executed cases)" : `${(v * 100).toFixed(1)}%`);
+  const challenge = report.challenge;
+  const challengeStatus = challenge.complete
+    ? "COMPLETE"
+    : challenge.scenarios.some((s) => s.status === "failing")
+      ? "FAILING"
+      : "INCOMPLETE";
+  const runStatus = m.failed > 0 ? "FAILING" : m.pending > 0 ? "INCOMPLETE" : "COMPLETE";
+  const evaluationComplete = runStatus === "COMPLETE" && challenge.complete;
+
   lines.push("");
-  lines.push(`cases: ${m.total}  pass=${m.passed}  fail=${m.failed}  pending=${m.pending}`);
+  lines.push(`cases: ${m.total} total | executed=${m.executed} (pass=${m.passed}, fail=${m.failed}) | pending=${m.pending}`);
   lines.push(`historical recall correctness: ${pct(m.recallCorrectness)}`);
   lines.push(`temporal correctness:          ${pct(m.temporalCorrectness)}`);
   lines.push(`citation coverage:             ${pct(m.citationCoverage)}`);
   lines.push(`false-unchanged violations:    ${m.falseUnchangedViolations} (must be 0)`);
   lines.push(`latency ms  p50=${m.latencyMs.p50.toFixed(1)}  p95=${m.latencyMs.p95.toFixed(1)}  max=${m.latencyMs.max.toFixed(1)}`);
-  lines.push(`provider cost USD:             ${m.costUsd.toFixed(6)}`);
+  lines.push(
+    report.cost.basis === "measured"
+      ? `provider cost USD:             ${report.cost.totalUsd.toFixed(6)} (measured from ${report.cost.providerCalls} provider call(s) across ${report.cost.casesWithProviderCalls} executed case(s))`
+      : "provider cost:                 NOT MEASURED — 0 provider calls recorded; zero is not a measured provider cost",
+  );
+  lines.push("");
+  lines.push("challenge scenarios (A/B/C):");
+  for (const s of challenge.scenarios) {
+    lines.push(
+      `  ${s.id}  ${s.status.toUpperCase().padEnd(15)} executed ${s.executed}/${s.total}  pass ${s.passed}  fail ${s.failed}  pending ${s.pending}`,
+    );
+  }
+  lines.push(
+    `challenge completion: ${challengeStatus} — cases ${challenge.executedCases}/${challenge.totalCases} executed; ` +
+    `scenarios complete ${challenge.completeScenarios}/${challenge.totalScenarios}, ` +
+    `executable ${challenge.executableScenarios}/${challenge.totalScenarios}, ` +
+    `fully executable ${challenge.fullyExecutableScenarios}/${challenge.totalScenarios}`,
+  );
+  lines.push(
+    `run status: ${runStatus} — ${m.executed}/${m.total} cases executed, ${m.pending} pending, ${m.failed} failed` +
+    (evaluationComplete ? "" : "; this is NOT a complete hiring-challenge evaluation"),
+  );
   return lines.join("\n");
 }
 

@@ -1,8 +1,9 @@
 /**
  * Per-case usage/cost collector for evaluation runs.
  * SUT handlers record provider usage here as they call fakes (or real providers,
- * later). A case that records nothing measured exactly zero — it is never zero
- * by accident of the harness not collecting.
+ * later). A case that records nothing has NO measured provider cost: its zero
+ * means no provider call was recorded, not that a provider was measured at zero.
+ * CostSummary.basis distinguishes the two in the report.
  */
 export class UsageCollector {
   private readonly entries: { source: string; usd: number }[] = [];
