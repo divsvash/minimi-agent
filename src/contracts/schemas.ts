@@ -22,6 +22,11 @@ export const EntityStatusSchema = z.enum(["active", "merged", "contested", "spli
 export const PolaritySchema = z.enum(["positive", "negative"]);
 export const ModalitySchema = z.enum([
   "asserted", "considered", "shortlisted", "rejected", "uncertain", "proposed", "decided",
+  "preferred", "hypothetical", "questioned",
+]);
+export const DecisionStatusSchema = z.enum(["proposed", "accepted", "rejected", "undecided"]);
+export const StatementCategorySchema = z.enum([
+  "fact", "preference", "recommendation", "decision", "constraint", "question", "hypothesis", "event",
 ]);
 export const EpistemicStatusSchema = z.enum([
   "user_asserted", "model_inferred", "externally_verified", "user_corrected",
@@ -193,3 +198,64 @@ export const JobSchema = z.object({
   createdAt: isoDateTime.optional(),
 });
 export type Job = z.infer<typeof JobSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Slice 3: extraction candidates (untrusted model output -> validated)
+ * ------------------------------------------------------------------ */
+
+export const CandidateEntityMentionSchema = z.object({
+  name: z.string().min(1).max(200),
+  type: EntityTypeSchema.optional(),
+});
+
+export const CandidateObjectSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("entity"),
+    name: z.string().min(1).max(200),
+    type: EntityTypeSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("literal"),
+    value: z.union([z.string().min(1), z.number(), z.boolean()]),
+  }),
+]);
+
+export const CandidateEvidenceSchema = z.object({
+  /** Must be an exact substring of Episode.text at [spanStart, spanEnd). */
+  quote: z.string().min(1).max(4000),
+  /** UTF-16 code units, matching the Evidence contract. */
+  spanStart: z.number().int().nonnegative(),
+  spanEnd: z.number().int().nonnegative(),
+});
+
+export const CandidateTemporalSchema = z.object({
+  /** The temporal words as stated in the episode, never a normalized replacement. */
+  expression: z.string().min(1).nullable().optional(),
+  /** Only set when the episode timestamp/context justifies the resolution. */
+  validFrom: nullableIso.optional(),
+  validTo: nullableIso.optional(),
+  timePrecision: EpisodePrecisionSchema.optional(),
+  validity: ValiditySchema.optional(),
+});
+
+export const CandidateStatementSchema = z.object({
+  subject: CandidateEntityMentionSchema,
+  predicate: z.string().min(1).max(80),
+  object: CandidateObjectSchema,
+  polarity: PolaritySchema,
+  modality: ModalitySchema,
+  decisionStatus: DecisionStatusSchema.nullable().optional(),
+  category: StatementCategorySchema.optional(),
+  /** Extraction confidence only — never a truth score (ADR-003). */
+  confidence: z.number().min(0).max(1).default(0.5),
+  temporal: CandidateTemporalSchema.optional(),
+  scope: z.record(z.string()).optional(),
+  qualifications: z.array(z.string().min(1)).max(20).optional(),
+  evidence: CandidateEvidenceSchema,
+});
+export type CandidateStatement = z.infer<typeof CandidateStatementSchema>;
+
+export const ExtractResultSchema = z.object({
+  candidates: z.array(CandidateStatementSchema).max(32),
+});
+export type ExtractResult = z.infer<typeof ExtractResultSchema>;

@@ -25,4 +25,17 @@ export const MIGRATIONS: { id: string; cypher: string[] }[] = [
       "CREATE CONSTRAINT episode_session_seq IF NOT EXISTS FOR (e:Episode) REQUIRE (e.sessionId, e.seq) IS UNIQUE",
     ],
   },
+  {
+    id: "0003_statement_provenance",
+    cypher: [
+      "CREATE CONSTRAINT statement_id IF NOT EXISTS FOR (s:Statement) REQUIRE s.id IS UNIQUE",
+      "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
+      "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE",
+      "CREATE INDEX statement_subject IF NOT EXISTS FOR (s:Statement) ON (s.subjectId)",
+      "CREATE INDEX statement_predicate IF NOT EXISTS FOR (s:Statement) ON (s.predicate)",
+      "CREATE INDEX statement_recorded IF NOT EXISTS FOR (s:Statement) ON (s.recordedAt)",
+      "CREATE INDEX evidence_episode IF NOT EXISTS FOR (e:Evidence) ON (e.episodeId)",
+      "CREATE INDEX entity_canonical IF NOT EXISTS FOR (e:Entity) ON (e.canonicalName)",
+    ],
+  },
 ];

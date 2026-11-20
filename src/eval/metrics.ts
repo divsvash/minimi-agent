@@ -1,5 +1,6 @@
 import type { GoldenMetric } from "./goldenCase.js";
 import type { AssertionResult } from "./matchers.js";
+import type { ScoreEntry } from "./scores.js";
 
 /**
  * A false-unchanged violation is a failed assertion explicitly marked `safety: true`.
@@ -29,6 +30,8 @@ export interface CaseResult {
   costUsd: number;
   /** Recorded provider usage entries. Empty = no provider call was recorded, not a free provider. */
   costBreakdown: readonly { source: string; usd: number }[];
+  /** Numeric measurements recorded by the SUT handler; absent for pending cases. */
+  scores?: readonly ScoreEntry[];
   assertions: AssertionResult[];
   /** Set when the SUT threw instead of returning output. */
   error?: string;

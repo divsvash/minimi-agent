@@ -5,7 +5,11 @@ import { performance } from "node:perf_hooks";
 import { GoldenCaseSchema, type GoldenCase } from "./goldenCase.js";
 import { applyAssertions } from "./matchers.js";
 import { computeMetrics, type CaseResult, type EvalMetrics } from "./metrics.js";
-import { summarizeCost, summarizeScenarios, type ChallengeSummary, type CostSummary } from "./summary.js";
+import {
+  summarizeCost, summarizeExtractionScores, summarizeScenarios,
+  type ChallengeSummary, type CostSummary, type ExtractionSummary,
+} from "./summary.js";
+import { ScoreCollector } from "./scores.js";
 import { UsageCollector } from "./usage.js";
 
 /**
@@ -14,7 +18,11 @@ import { UsageCollector } from "./usage.js";
  * records nothing yields zero recorded cost with an empty breakdown; that is lack
  * of measurement, not evidence that provider calls were free.
  */
-export type SutHandler = (input: Record<string, unknown>, usage: UsageCollector) => Promise<unknown>;
+export type SutHandler = (
+  input: Record<string, unknown>,
+  usage: UsageCollector,
+  scores: ScoreCollector,
+) => Promise<unknown>;
 export type SutRegistry = Record<string, SutHandler>;
 
 export interface EvalReport {
@@ -24,6 +32,8 @@ export interface EvalReport {
   challenge: ChallengeSummary;
   /** Whether provider cost was measured or is unmeasured because no provider call was recorded. */
   cost: CostSummary;
+  /** Extraction measurements; mocked-provider runs are labelled as such. */
+  extraction: ExtractionSummary;
   failures: number;
 }
 
@@ -115,6 +125,7 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
     assertions: [],
     costUsd: 0,
     costBreakdown: [],
+    scores: [],
   };
   if (!handler) {
     return {
@@ -126,8 +137,9 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
   }
   const t0 = performance.now();
   const usage = new UsageCollector();
+  const scores = new ScoreCollector();
   try {
-    const output = await handler(c.input ?? {}, usage);
+    const output = await handler(c.input ?? {}, usage, scores);
     const assertions = applyAssertions(output, c.expect);
     const latencyMs = performance.now() - t0;
     const failed = assertions.filter((a) => !a.pass);
@@ -138,6 +150,7 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
       assertions,
       costUsd: usage.totalUsd(),
       costBreakdown: usage.breakdown(),
+      scores: scores.all(),
       summary: failed.length === 0 ? "ok" : `${failed.length}/${assertions.length} assertions failed: ${failed.map((a) => `${a.path} ${a.op}`).join(", ")}`,
     };
   } catch (err) {
@@ -148,6 +161,7 @@ async function runCase(c: GoldenCase, registry: SutRegistry): Promise<CaseResult
       error: err instanceof Error ? err.message : String(err),
       costUsd: usage.totalUsd(),
       costBreakdown: usage.breakdown(),
+      scores: scores.all(),
       summary: `SUT threw: ${err instanceof Error ? err.message : String(err)}`,
     };
   }

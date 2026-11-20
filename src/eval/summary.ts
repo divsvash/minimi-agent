@@ -121,3 +121,57 @@ export function summarizeCost(results: CaseResult[]): CostSummary {
     basis: providerCalls > 0 ? "measured" : "not_measured",
   };
 }
+
+export const EXTRACTION_SCORE_NAMES = {
+  precision: "extraction_precision",
+  recall: "extraction_recall",
+  provenance: "provenance_validity",
+  negationModality: "negation_modality_preservation",
+  unsupportedAssertionRate: "unsupported_assertion_rate",
+  duplicateOnRetryRate: "duplicate_on_retry_rate",
+} as const;
+
+export interface AggregatedScore {
+  /** Mean across executed cases that recorded this score; null when none did. */
+  mean: number | null;
+  cases: number;
+}
+
+export interface ExtractionSummary {
+  executedCases: number;
+  /** `mocked` when every recorded provider call came from a fake provider. */
+  providerBasis: "mocked" | "unmeasured" | "other";
+  /** Slice 3 has no real-provider extraction run; never claim semantic quality. */
+  semanticQuality: "not_measured";
+  scores: Record<keyof typeof EXTRACTION_SCORE_NAMES, AggregatedScore>;
+}
+
+function aggregate(results: CaseResult[], name: string): AggregatedScore {
+  const values = results.flatMap((r) => (r.scores ?? []).filter((s) => s.name === name).map((s) => s.value));
+  return {
+    mean: values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length,
+    cases: values.length,
+  };
+}
+
+export function summarizeExtractionScores(results: CaseResult[]): ExtractionSummary {
+  const executed = results.filter((r) => r.status !== "pending");
+  const scoredCases = executed.filter((r) => (r.scores ?? []).length > 0);
+  const sources = scoredCases.flatMap((r) => r.costBreakdown.map((c) => c.source));
+  const providerBasis = sources.length === 0
+    ? "unmeasured"
+    : sources.every((s) => /fake/i.test(s)) ? "mocked" : "other";
+  return {
+    executedCases: scoredCases.length,
+    providerBasis,
+    semanticQuality: "not_measured",
+    scores: {
+      precision: aggregate(executed, EXTRACTION_SCORE_NAMES.precision),
+      recall: aggregate(executed, EXTRACTION_SCORE_NAMES.recall),
+      provenance: aggregate(executed, EXTRACTION_SCORE_NAMES.provenance),
+      negationModality: aggregate(executed, EXTRACTION_SCORE_NAMES.negationModality),
+      unsupportedAssertionRate: aggregate(executed, EXTRACTION_SCORE_NAMES.unsupportedAssertionRate),
+      duplicateOnRetryRate: aggregate(executed, EXTRACTION_SCORE_NAMES.duplicateOnRetryRate),
+    },
+  };
+}

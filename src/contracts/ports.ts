@@ -8,7 +8,7 @@
  * tests and offline evaluation, not abstraction for its own sake.
  */
 import type {
-  Entity, EntityType, Episode, EpisodeRole, Job, Observation, Statement,
+  Entity, EntityType, Episode, EpisodeRole, Evidence, Job, Observation, Statement,
 } from "./schemas.js";
 
 export interface EpisodeStore {
@@ -73,7 +73,20 @@ export interface ActiveAtFilter {
   modality?: Statement["modality"];
 }
 
-export interface StatementStore {
+/**
+ * One atomic statement bundle. Evidence is mandatory: a Statement without a
+ * `SUPPORTED_BY` edge is not a valid candidate and must never be persisted.
+ * Entities are the subject plus (when objectKind=entity) the object. Slice 3
+ * creates unresolved mention-scoped entities; entity resolution/merging is
+ * Slice 4 and is intentionally absent here.
+ */
+export interface StatementWrite {
+  statement: Omit<Statement, "status">;
+  evidence: readonly Evidence[];
+  entities: readonly Entity[];
+}
+
+export interface StatementStore<TX extends object = object> {
   byId(id: string): Promise<Statement | null>;
   forSubject(subjectId: string): Promise<Statement[]>;
   /**
@@ -82,8 +95,12 @@ export interface StatementStore {
    * lifecycle event log are all resolved inside this call, not by callers.
    */
   activeAt(filter: ActiveAtFilter): Promise<Statement[]>;
-  /** Append-only write; corrections are new statements + lifecycle events, never mutation (ADR-004). */
-  insert(statement: Omit<Statement, "status">): Promise<Statement>;
+  /**
+   * Append-only, idempotent write inside the caller's fenced transaction.
+   * Corrections are new statements + lifecycle events, never mutation (ADR-004).
+   * The same statement id with different immutable content is a ConflictError.
+   */
+  insert(tx: TX, write: StatementWrite): Promise<Statement>;
 }
 
 export interface ObservationStore {
