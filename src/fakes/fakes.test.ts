@@ -182,3 +182,35 @@ test("InMemoryEpisodeStore: invalid range (from >= to) returns empty, never thro
   assert.deepEqual(await s.byOccurredRange(same, same), []);
   assert.deepEqual(await s.byOccurredRange(new Date("2026-11-04T00:00:00.000Z"), new Date("2026-11-03T00:00:00.000Z")), []);
 });
+
+test("InMemoryEpisodeStore.withoutCompletedExtraction excludes completed extract jobs", async () => {
+  const { InMemoryEpisodeStore } = await import("./memoryEpisodeStore.js");
+  const s = new InMemoryEpisodeStore();
+  const mk = (id: string, createdAt: string) => ({
+    id, externalId: `x-${id}`, sessionId: "s", seq: 0, role: "user" as const, text: id,
+    occurredAt: createdAt, precision: "second" as const, tz: "UTC", source: "chat" as const, createdAt,
+  });
+  s.seed([
+    mk("pending-old", "2026-11-01T00:00:00.000Z"),
+    mk("completed-old", "2026-11-02T00:00:00.000Z"),
+    mk("edge-at-cutoff", "2026-11-04T00:00:00.000Z"),
+    mk("pending-new", "2026-11-05T00:00:00.000Z"),
+  ]);
+  s.markExtractionCompleted("completed-old");
+
+  const cutoff = new Date("2026-11-04T00:00:00.000Z");
+  assert.deepEqual(
+    (await s.withoutCompletedExtraction(cutoff)).map((e) => e.id),
+    ["pending-old"],
+    "completed jobs and episodes at/after the cutoff are excluded",
+  );
+
+  s.markExtractionPending("completed-old");
+  assert.deepEqual(
+    (await s.withoutCompletedExtraction(cutoff)).map((e) => e.id),
+    ["pending-old", "completed-old"],
+    "clearing completion makes the episode eligible again",
+  );
+
+  assert.throws(() => s.markExtractionCompleted("missing"), /unknown episode: missing/);
+});
