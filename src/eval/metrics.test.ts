@@ -29,34 +29,51 @@ test("pass rates computed per metric tag over executed cases only", () => {
   assert.equal(m.citationCoverage, null); // no executed case tagged it
 });
 
-test("false-unchanged violations require the SYSTEM to claim verified_unchanged — unrelated failures don't count", () => {
+test("false-unchanged violations count only failed safety assertions, not ordinary failures", () => {
   const trapWithUnrelatedFailure = base({
     id: "trap-citation-fail",
     noChangeTrap: true,
     status: "fail",
     assertions: [
-      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "no_change_found", pass: true },
+      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "no_change_found", pass: true, safety: true },
       { path: "report.citations", op: "exists", actual: undefined, pass: false, message: "citation missing" },
     ],
   });
-  const systemClaimsUnchanged = base({
+  const failedSafetyAssertion = base({
     id: "system-claims-unchanged",
     noChangeTrap: true,
     status: "fail",
     assertions: [
-      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "verified_unchanged", pass: false, message: "expected verdict != verified_unchanged" },
+      {
+        path: "verdict", op: "neq", value: "verified_unchanged",
+        actual: "verified_unchanged", pass: false, safety: true,
+        message: "expected verdict != verified_unchanged",
+      },
     ],
   });
-  const changeFactsButUnchanged = base({
-    id: "change-facts-but-unchanged", // not flagged as a trap case at all
+  const ordinaryFailureOnly = base({
+    id: "citation-only-failure",
+    noChangeTrap: true,
+    status: "fail",
+    assertions: [
+      { path: "report.citations", op: "exists", actual: undefined, pass: false, message: "citation missing" },
+    ],
+  });
+  const changedCaseClaimsUnchanged = base({
+    id: "changed-case-claims-unchanged", // safety assertions also apply outside noChangeTrap cases
     noChangeTrap: false,
     status: "fail",
     assertions: [
-      { path: "verdict", op: "eq", value: "changed", actual: "verified_unchanged", pass: false, message: "expected verdict = changed" },
+      { path: "verdict", op: "neq", value: "verified_unchanged", actual: "verified_unchanged", pass: false, safety: true },
+      { path: "facts.0.status", op: "eq", value: "changed", actual: "unchanged", pass: false },
     ],
   });
-  const m = computeMetrics([trapWithUnrelatedFailure, systemClaimsUnchanged, changeFactsButUnchanged]);
-  assert.equal(m.falseUnchangedViolations, 2, "unrelated trap-case failure must not count; both verdict-path unchanged claims must");
+
+  const m = computeMetrics([
+    trapWithUnrelatedFailure, failedSafetyAssertion, ordinaryFailureOnly, changedCaseClaimsUnchanged,
+  ]);
+  assert.equal(m.falseUnchangedViolations, 2, "only failed safety assertions count, trap-flagged or not");
+  assert.equal(m.failed, 4, "general case failures stay in the ordinary failure count");
 });
 
 test("latency percentiles and cost over executed cases", () => {

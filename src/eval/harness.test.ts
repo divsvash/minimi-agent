@@ -130,6 +130,20 @@ test("loadCases rejects duplicate ids", async () => {
   await assert.rejects(loadCases(join(dir, "dup")), /duplicate golden case id/);
 });
 
+test("loadCases rejects noChangeTrap cases without an explicit safety assertion", async () => {
+  await mkdir(join(dir, "trap-no-safety"), { recursive: true });
+  await writeFile(
+    join(dir, "trap-no-safety", "trap.json"),
+    JSON.stringify({
+      ...failingCase,
+      id: "trap-no-safety",
+      noChangeTrap: true,
+      expect: [{ path: "verdict", op: "neq", value: "verified_unchanged" }],
+    }),
+  );
+  await assert.rejects(loadCases(join(dir, "trap-no-safety")), /no safety assertion/);
+});
+
 test("repo lock file matches the repo golden tree", async () => {
   const drift = await checkDrift(repoGolden, repoLock);
   assert.deepEqual(drift, { ok: true, mismatched: [], missing: [], added: [] });

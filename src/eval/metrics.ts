@@ -2,14 +2,16 @@ import type { GoldenMetric } from "./goldenCase.js";
 import type { AssertionResult } from "./matchers.js";
 
 /**
- * A failing assertion counts as a FALSE UNCHANGED claim iff the output under test
- * itself asserts `verdict: verified_unchanged` (path contains "verdict") and that
- * assertion fails — i.e. the system claimed "nothing changed" where the fixture
- * forbids or contradicts that. Failures on unrelated paths (citations, sources,
- * formatting) are ordinary failures, not false-unchanged claims.
+ * A false-unchanged violation is a failed assertion explicitly marked `safety: true`.
+ * Ordinary failures — a missing citation, a bad source list, a formatting mismatch —
+ * remain ordinary case failures and are counted by `failed`, never here.
+ *
+ * Making the safety assertion explicit (rather than inferring it from a path/value
+ * heuristic) keeps the two measurements independent and lets a case state the exact
+ * safety property it is enforcing.
  */
-export function claimsVerifiedUnchanged(a: AssertionResult): boolean {
-  return !a.pass && a.actual === "verified_unchanged" && /verdict/i.test(a.path);
+export function failedSafetyAssertion(a: AssertionResult): boolean {
+  return !a.pass && a.safety === true;
 }
 
 export type CaseStatus = "pass" | "fail" | "pending";
@@ -47,10 +49,10 @@ export interface EvalMetrics {
   /** Fraction of EXECUTED cases tagged citation_coverage that pass; null if none executed. */
   citationCoverage: number | null;
   /**
-   * Count of executed cases whose failing assertions include the system itself
-   * claiming `verdict: verified_unchanged` where the fixture forbids/contradicts it.
-   * Not a count of all trap-case failures — unrelated failures (citations, sources)
-   * are NOT false-unchanged claims. Target for the whole suite is ALWAYS 0 (§6.4, ADR-009).
+   * Count of executed cases with at least one failed assertion marked `safety: true`.
+   * These are the explicit false-unchanged safety gates; ordinary failures (citations,
+   * sources, formatting) do not increment this. Target for the whole suite is ALWAYS 0
+   * (§6.4, ADR-009).
    */
   falseUnchangedViolations: number;
   /** Executed (non-pending) cases' latency distribution. */
@@ -82,7 +84,7 @@ export function computeMetrics(results: CaseResult[]): EvalMetrics {
     recallCorrectness: passRate(results, "historical_recall"),
     temporalCorrectness: passRate(results, "temporal_correctness"),
     citationCoverage: passRate(results, "citation_coverage"),
-    falseUnchangedViolations: executed.filter((r) => r.assertions.some(claimsVerifiedUnchanged)).length,
+    falseUnchangedViolations: executed.filter((r) => r.assertions.some(failedSafetyAssertion)).length,
     latencyMs: {
       p50: pctl(latencies, 50),
       p95: pctl(latencies, 95),

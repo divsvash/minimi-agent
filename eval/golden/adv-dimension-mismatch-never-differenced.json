@@ -6,6 +6,7 @@
   "expect": [
     { "path": "comparison.verdict", "op": "eq", "value": "dimension_mismatch" },
     { "path": "comparison.mismatchedKeys", "op": "includes", "value": "billingPeriod" },
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged", "safety": true, "description": "incomparable dimensions can never license an unchanged verdict" },
     { "path": "verdict", "op": "neq", "value": "changed", "description": "incomparable dimensions can never license a change verdict" }
   ],
   "metrics": ["false_unchanged"],

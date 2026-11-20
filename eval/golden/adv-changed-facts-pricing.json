@@ -5,6 +5,7 @@
   "kind": "adversarial",
   "question": "Has the Acme CRM Team-plan pricing changed since the baseline we recorded?",
   "expect": [
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged", "safety": true, "description": "changed facts must never be reported as unchanged" },
     { "path": "verdict", "op": "eq", "value": "changed" },
     { "path": "report.current.value", "op": "exists" },
     { "path": "report.baseline.value", "op": "exists" }

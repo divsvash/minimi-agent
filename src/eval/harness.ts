@@ -37,6 +37,9 @@ export async function loadCases(dir: string): Promise<GoldenCase[]> {
   for (const c of cases) {
     if (ids.has(c.id)) throw new Error(`duplicate golden case id: ${c.id}`);
     ids.add(c.id);
+    if (c.noChangeTrap && !c.expect.some((a) => a.safety === true)) {
+      throw new Error(`golden case ${c.id} sets noChangeTrap but declares no safety assertion`);
+    }
   }
   return cases;
 }

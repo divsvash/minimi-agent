@@ -14,6 +14,13 @@ export const GoldenAssertionSchema = z.object({
   op: z.enum(["eq", "neq", "oneOf", "includes", "length", "gte", "lte", "exists"]),
   value: z.unknown().optional(),
   description: z.string().optional(),
+  /**
+   * Marks the assertion that encodes a safety property (for example, "must not
+   * claim verified_unchanged"). A failure is counted as a false-unchanged safety
+   * violation, separately from ordinary case failures. Every noChangeTrap case
+   * must declare at least one.
+   */
+  safety: z.boolean().optional(),
 });
 export type GoldenAssertion = z.infer<typeof GoldenAssertionSchema>;
 

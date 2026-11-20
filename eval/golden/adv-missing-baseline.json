@@ -5,7 +5,7 @@
   "question": "Has Acme CRM's pricing changed?",
   "expect": [
     { "path": "verdict", "op": "oneOf", "value": ["no_change_found", "insufficient_evidence"], "description": "absence of a baseline never licenses a verdict about change" },
-    { "path": "verdict", "op": "neq", "value": "verified_unchanged" },
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged", "safety": true },
     { "path": "verdict", "op": "neq", "value": "changed" }
   ],
   "metrics": ["false_unchanged"],

@@ -4,7 +4,7 @@
   "kind": "adversarial",
   "question": "What is Acme CRM's Team-plan price now?",
   "expect": [
-    { "path": "verdict", "op": "neq", "value": "verified_unchanged" },
+    { "path": "verdict", "op": "neq", "value": "verified_unchanged", "safety": true },
     { "path": "sources", "op": "length", "value": 2, "description": "conflicting sources in different lineages are both shown, never merged or averaged" }
   ],
   "metrics": ["citation_coverage", "false_unchanged"],
