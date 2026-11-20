@@ -78,40 +78,114 @@ export class FakeResearchProvider implements ResearchProvider {
 }
 
 /**
- * Recurring scripted verdict fixtures for testing CONSUMERS of ResearchProvider.
- * These do NOT verify the change-detection/verdict engine — they are canned outputs.
- * Verdict-rule correctness (baseline/current observations, authority, freshness,
- * conflicts, dimension comparability) belongs to Slice 7 and will be tested there
- * against ComparisonOutcome and the four-verdict precedence rules.
+ * Scripted verdict fixtures for testing CONSUMERS of ResearchProvider.
+ *
+ * The fake still SCRIPTS the verdict; it does not compute one. To keep that honest,
+ * changed()/verifiedUnchanged() carry the baseline and current observations a consumer
+ * would compare: identical dimensions, and values that really differ (changed) or
+ * really agree (verifiedUnchanged). Verdict-rule correctness (comparability, authority,
+ * freshness, conflicts) remains Slice 7 work.
  */
+const FIXTURE_CAPTURED_AT = "2026-11-19T00:00:00.000Z";
+const FIXTURE_ATTRIBUTE = "pricing.amount";
+const FIXTURE_DIMENSIONS = { plan: "team", billingPeriod: "monthly", currency: "USD" } as const;
+
+type FixtureValue = string | number | boolean;
+
+function fixtureObservation(opts: {
+  id: string;
+  value: FixtureValue;
+  sourceUrl: string;
+  sourceEffectiveAt: string;
+}): Observation {
+  return {
+    id: opts.id,
+    obsKey: `obs:${opts.id}`,
+    attribute: FIXTURE_ATTRIBUTE,
+    dimensions: { ...FIXTURE_DIMENSIONS },
+    value: opts.value,
+    sourceEffectiveAt: opts.sourceEffectiveAt,
+    sourcePublishedAt: null,
+    recordedAt: FIXTURE_CAPTURED_AT,
+    source: {
+      url: opts.sourceUrl,
+      title: "Fixture source",
+      publisher: new URL(opts.sourceUrl).hostname,
+      publishedAt: null,
+      accessedAt: FIXTURE_CAPTURED_AT,
+    },
+    extractionMethod: "manual",
+    extractionConfidence: 1,
+    obsNormVersion: 1,
+  };
+}
+
 export const researchFixtures = {
-  /** Comparable + equal + authoritative + fresh. */
-  verifiedUnchanged(value: string | number | boolean, source: string): Extract<ResearchScript, { kind: "outcome" }> {
+  /** Comparable + equal + authoritative + fresh. Baseline and current are distinct
+   *  observations with the same value, so consumers must compare values, not identity. */
+  verifiedUnchanged(value: FixtureValue, source: string): Extract<ResearchScript, { kind: "outcome" }> {
+    const baseline = fixtureObservation({
+      id: `baseline:${String(value)}`,
+      value,
+      sourceUrl: source,
+      sourceEffectiveAt: "2026-11-01T00:00:00.000Z",
+    });
+    const current = fixtureObservation({
+      id: `current:${String(value)}`,
+      value,
+      sourceUrl: source,
+      sourceEffectiveAt: "2026-11-18T00:00:00.000Z",
+    });
+    if (!Object.is(baseline.value, current.value)) {
+      throw new Error("verifiedUnchanged fixture requires equal baseline/current values");
+    }
     return {
       kind: "outcome",
       outcome: {
         verdict: "verified_unchanged",
+        baseline,
+        current,
         attempts: [
           {
             outcome: "ok", url: source, relevant: true, accessible: true,
-            attributeExtracted: true, dimsComparable: true, value,
-            sourceEffectiveAt: "2026-11-01T00:00:00.000Z", authoritative: true, fresh: true,
+            attributeExtracted: true, dimsComparable: true, value: current.value,
+            sourceEffectiveAt: current.sourceEffectiveAt,
+            authoritative: true, fresh: true,
           },
         ],
       },
     };
   },
-  /** Comparable + differs + authoritative + fresh. (Baseline/before lives with the caller — the provider fake has no baseline to compare.) */
-  changed(after: string | number | boolean, source: string): Extract<ResearchScript, { kind: "outcome" }> {
+  /** Comparable + differs + authoritative + fresh. Baseline and current carry the
+   *  same dimensions and genuinely distinct values. */
+  changed(before: FixtureValue, after: FixtureValue, source: string): Extract<ResearchScript, { kind: "outcome" }> {
+    const baseline = fixtureObservation({
+      id: `baseline:${String(before)}`,
+      value: before,
+      sourceUrl: source,
+      sourceEffectiveAt: "2026-11-01T00:00:00.000Z",
+    });
+    const current = fixtureObservation({
+      id: `current:${String(after)}`,
+      value: after,
+      sourceUrl: source,
+      sourceEffectiveAt: "2026-11-18T00:00:00.000Z",
+    });
+    if (Object.is(baseline.value, current.value)) {
+      throw new Error("changed fixture requires distinct baseline/current values");
+    }
     return {
       kind: "outcome",
       outcome: {
         verdict: "changed",
+        baseline,
+        current,
         attempts: [
           {
             outcome: "ok", url: source, relevant: true, accessible: true,
-            attributeExtracted: true, dimsComparable: true, value: after,
-            sourceEffectiveAt: "2026-11-18T00:00:00.000Z", authoritative: true, fresh: true,
+            attributeExtracted: true, dimsComparable: true, value: current.value,
+            sourceEffectiveAt: current.sourceEffectiveAt,
+            authoritative: true, fresh: true,
           },
         ],
       },

@@ -80,15 +80,17 @@ test("FakeEmbeddingProvider is stable and dimension-sized", async () => {
 test("FakeResearchProvider scripts the verdict matrix deterministically", async () => {
   const r = new FakeResearchProvider({ now: () => new Date("2026-11-19T00:00:00.000Z") });
   r.enqueue(researchFixtures.verifiedUnchanged("$49/month", "https://acme.example/pricing"));
-  r.enqueue(researchFixtures.changed("$59/month", "https://acme.example/pricing"));
+  r.enqueue(researchFixtures.changed("$49/month", "$59/month", "https://acme.example/pricing"));
   r.enqueue(researchFixtures.emptyResults());
   r.enqueue(researchFixtures.staleSource("2026-06-01T00:00:00.000Z", "https://acme.example/pricing"));
   r.enqueue(researchFixtures.conflictingSources("https://a.example", "https://b.example"));
   r.enqueue(researchFixtures.dimensionMismatch("https://acme.example/annual-plan"));
 
   const req = { entity: { name: "Acme CRM" }, attribute: "pricing.amount", dimensions: { plan: "team", billingPeriod: "monthly" } };
-  assert.equal((await r.observe(req)).verdict, "verified_unchanged");
-  assert.equal((await r.observe(req)).verdict, "changed");
+  const unchanged = await r.observe(req);
+  const changed = await r.observe(req);
+  assert.equal(unchanged.verdict, "verified_unchanged");
+  assert.equal(changed.verdict, "changed");
   assert.equal((await r.observe(req)).verdict, "insufficient_evidence");
   const stale = await r.observe(req);
   assert.equal(stale.verdict, "no_change_found");
@@ -100,6 +102,30 @@ test("FakeResearchProvider scripts the verdict matrix deterministically", async 
   const mismatch = await r.observe(req);
   assert.equal(mismatch.reason, "dimension_mismatch");
   assert.equal(r.calls.length, 6);
+});
+
+test("changed/verifiedUnchanged fixtures carry coherent baseline and current observations", () => {
+  const changed = researchFixtures.changed("$49/month", "$59/month", "https://acme.example/pricing").outcome;
+  assert.ok(changed.baseline);
+  assert.ok(changed.current);
+  assert.notEqual(changed.baseline.id, changed.current.id);
+  assert.notEqual(changed.baseline.value, changed.current.value);
+  assert.deepEqual(changed.baseline.dimensions, changed.current.dimensions);
+  assert.equal(changed.current.value, "$59/month");
+  assert.equal(changed.attempts[0]!.value, changed.current.value);
+
+  const unchanged = researchFixtures.verifiedUnchanged("$49/month", "https://acme.example/pricing").outcome;
+  assert.ok(unchanged.baseline);
+  assert.ok(unchanged.current);
+  assert.notEqual(unchanged.baseline.id, unchanged.current.id);
+  assert.equal(unchanged.baseline.value, unchanged.current.value);
+  assert.deepEqual(unchanged.baseline.dimensions, unchanged.current.dimensions);
+  assert.equal(unchanged.attempts[0]!.value, unchanged.current.value);
+
+  assert.throws(
+    () => researchFixtures.changed("$49/month", "$49/month", "https://acme.example/pricing"),
+    /distinct baseline\/current values/,
+  );
 });
 
 test("InMemoryEpisodeStore semantics match the Slice 1 contract (verbatim, ordered, half-open)", async () => {
