@@ -97,9 +97,17 @@ export class FakeLLMProvider implements LLMProvider {
 }
 
 /**
- * Deterministic embedding fake: vector derived from sha256 of the input text.
- * Not semantically meaningful — it is stable and collision-free enough for tests,
- * which is all offline evaluation requires.
+ * Deterministic embedding fake for PROVIDER PLUMBING AND VECTOR SHAPE ONLY.
+ *
+ * Dimensions come from a counter-mode SHA-256 stream over the input text: each
+ * 32-byte digest block is consumed once, then the counter is incremented for the
+ * next block. Digest material is therefore never reused, so a 16-dimensional
+ * vector is not the first eight values repeated. Values are normalized to [-1, 1].
+ *
+ * This is NOT a semantic embedding. Hash bytes carry no relationship to meaning,
+ * so cosine similarity between these vectors says nothing about document
+ * similarity, retrieval quality, or ranking. Do not use this fake to draw
+ * conclusions about relevance; use a real embedding provider for that.
  */
 export class FakeEmbeddingProvider implements EmbeddingProvider {
   readonly model: string;
@@ -135,12 +143,19 @@ export class FakeEmbeddingProvider implements EmbeddingProvider {
   }
 
   private vectorFor(text: string): number[] {
-    const digest = createHash("sha256").update(text, "utf8").digest();
     const out: number[] = [];
-    for (let i = 0; i < this.dim; i++) {
-      // 4-byte window per dimension, folded to a signed unit float
-      const b = digest[(i * 4) % digest.length]!;
-      out.push((b - 128) / 128);
+    for (let block = 0; out.length < this.dim; block++) {
+      // Fixed-width counter appended to the text so blocks cannot alias.
+      const counter = Buffer.alloc(4);
+      counter.writeUInt32BE(block, 0);
+      const digest = createHash("sha256")
+        .update(text, "utf8")
+        .update(counter)
+        .digest();
+      for (const byte of digest) {
+        if (out.length === this.dim) break;
+        out.push((byte / 255) * 2 - 1);
+      }
     }
     return out;
   }

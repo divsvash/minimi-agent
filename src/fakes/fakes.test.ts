@@ -67,12 +67,36 @@ test("FakeLLMProvider queued responses are consumed FIFO", async () => {
   assert.equal(b.text, "second");
 });
 
-test("FakeEmbeddingProvider is stable and dimension-sized", async () => {
+test("FakeEmbeddingProvider is stable, dimension-sized, and uses non-overlapping digest bytes", async () => {
   const e = new FakeEmbeddingProvider("fake-embed-1", 16);
   const [v1] = await e.embed(["hello world"]);
   const [v2] = await e.embed(["hello world"]);
   assert.equal(v1!.length, 16);
   assert.deepEqual(v1, v2);
+  assert.notDeepEqual(
+    v1!.slice(0, 8),
+    v1!.slice(8, 16),
+    "default 16-d vector must not repeat the first half",
+  );
+  for (const x of v1!) assert.ok(x >= -1 && x <= 1, `embedding component out of range: ${x}`);
+
+  const batch = await e.embed(["alpha", "beta"]);
+  assert.notDeepEqual(batch[0], batch[1], "different texts should not produce identical vectors");
+  assert.deepEqual(await e.embed(["alpha", "beta"]), batch, "batch vectors should be stable");
+  assert.deepEqual(
+    (await new FakeEmbeddingProvider("fake-embed-1", 16).embed(["hello world"]))[0],
+    v1,
+    "vectors should be deterministic across provider instances",
+  );
+
+  const [long] = await new FakeEmbeddingProvider("fake-embed-1", 40).embed(["hello world"]);
+  assert.equal(long!.length, 40, "vectors longer than one digest block should keep growing");
+  assert.notDeepEqual(
+    long!.slice(0, 8),
+    long!.slice(32, 40),
+    "a later digest block must not repeat the first block",
+  );
+
   e.timeoutNext(1);
   await assert.rejects(e.embed(["x"]), ProviderTimeoutError);
 });
