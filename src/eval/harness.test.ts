@@ -100,6 +100,23 @@ test("computeTreeHash is deterministic and order-independent", async () => {
   for (const h of Object.values(a)) assert.match(h, /^[0-9a-f]{64}$/);
 });
 
+test("computeTreeHash keeps identical file names in different nested directories distinct", async () => {
+  const root = await mkdtemp(join(tmpdir(), "minimi-treehash-"));
+  try {
+    await mkdir(join(root, "a", "nested"), { recursive: true });
+    await mkdir(join(root, "b", "nested"), { recursive: true });
+    await writeFile(join(root, "a", "nested", "same.txt"), "alpha");
+    await writeFile(join(root, "b", "nested", "same.txt"), "beta");
+
+    const hashes = await computeTreeHash(root);
+
+    assert.deepEqual(Object.keys(hashes).sort(), ["a/nested/same.txt", "b/nested/same.txt"]);
+    assert.notEqual(hashes["a/nested/same.txt"], hashes["b/nested/same.txt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("loadCases rejects schema-invalid cases", async () => {
   await mkdir(join(dir, "bad"), { recursive: true });
   await writeFile(join(dir, "bad", "bad.json"), JSON.stringify({ id: "BAD ID!", title: "x" }));

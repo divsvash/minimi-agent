@@ -41,19 +41,25 @@ export async function loadCases(dir: string): Promise<GoldenCase[]> {
   return cases;
 }
 
-/** sha256 of each file under `dir`, keyed by forward-slash relative path. Deterministic. */
+/** sha256 of each file under `dir`, keyed by forward-slash path relative to `dir`. Deterministic. */
 export async function computeTreeHash(dir: string): Promise<Record<string, string>> {
+  return computeTreeHashFrom(dir, dir);
+}
+
+/** `root` is the directory the caller asked about; every key is relative to it, so
+ *  equal file names in different subtrees stay distinct instead of overwriting. */
+async function computeTreeHashFrom(root: string, dir: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const abs = join(dir, entry.name);
     if (entry.isDirectory()) {
-      Object.assign(out, await computeTreeHash(abs));
+      Object.assign(out, await computeTreeHashFrom(root, abs));
       continue;
     }
     if (!entry.isFile()) continue;
     const hash = createHash("sha256").update(await readFile(abs)).digest("hex");
-    out[relative(dir, abs).replaceAll("\\", "/")] = hash;
+    out[relative(root, abs).replaceAll("\\", "/")] = hash;
   }
   return out;
 }
