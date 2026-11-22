@@ -2,18 +2,60 @@ import { ConflictError } from "../core/errors.js";
 import type { Entity, Evidence, Statement } from "../contracts/schemas.js";
 import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
 import { validateStatementWrite } from "../memory/validateStatementWrite.js";
+import { isMemoryTransaction, type Snapshottable } from "./memoryTransaction.js";
+
+interface StoreState {
+  statements: Map<string, Statement>;
+  evidence: Map<string, Evidence>;
+  entities: Map<string, Entity>;
+  evidenceByStatement: Map<string, string[]>;
+}
 
 /**
  * Offline StatementStore with the same observable append-only/idempotent
  * semantics as Neo4j for Slice 3. It is not a temporal engine: `activeAt`
  * implements only the conservative valid/recorded-time subset used by Slice 3.
  */
-export class InMemoryStatementStore implements StatementStore<object> {
+export class InMemoryStatementStore implements StatementStore<object>, Snapshottable {
   private readonly statements = new Map<string, Statement>();
   private readonly evidence = new Map<string, Evidence>();
   private readonly entities = new Map<string, Entity>();
   /** Mirrors Neo4j's `(s)-[:SUPPORTED_BY]->(e)` edge so provenance is queryable offline. */
   private readonly evidenceByStatement = new Map<string, string[]>();
+
+  /** Live (committed) state, read by every query method. */
+  private liveState(): StoreState {
+    return {
+      statements: this.statements,
+      evidence: this.evidence,
+      entities: this.entities,
+      evidenceByStatement: this.evidenceByStatement,
+    };
+  }
+
+  /** Private copy for a fenced transaction: writes stay invisible until commit. */
+  snapshot(): StoreState {
+    const copy = <K, V>(map: Map<K, V>): Map<K, V> =>
+      new Map([...map].map(([key, value]) => [key, structuredClone(value)] as [K, V]));
+    return {
+      statements: copy(this.statements),
+      evidence: copy(this.evidence),
+      entities: copy(this.entities),
+      evidenceByStatement: copy(this.evidenceByStatement),
+    };
+  }
+
+  restore(snapshot: unknown): void {
+    const state = snapshot as StoreState;
+    const replace = <K, V>(target: Map<K, V>, source: Map<K, V>): void => {
+      target.clear();
+      for (const [key, value] of source) target.set(key, value);
+    };
+    replace(this.statements, state.statements);
+    replace(this.evidence, state.evidence);
+    replace(this.entities, state.entities);
+    replace(this.evidenceByStatement, state.evidenceByStatement);
+  }
 
   async byId(id: string): Promise<Statement | null> {
     const s = this.statements.get(id);
@@ -41,14 +83,20 @@ export class InMemoryStatementStore implements StatementStore<object> {
       .map((s) => structuredClone(s));
   }
 
-  async insert(_tx: object, write: StatementWrite): Promise<Statement> {
+  async insert(tx: object, write: StatementWrite): Promise<Statement> {
+    // Inside a fenced offline transaction, inserts accumulate in a private
+    // working copy and become visible only when the ledger commits it. This is
+    // the in-memory equivalent of Neo4j's executeWrite: a later failure rolls
+    // back every earlier insert in the same transaction.
+    const state = isMemoryTransaction(tx) ? tx.workingCopy<StoreState>(this) : this.liveState();
+
     // Same write validation as Neo4j: a statement without evidence, with
     // mixed-episode evidence, or without its subject/object entity is rejected
     // here too, so the offline store cannot accept what the real one would not.
     const { statement: validated, evidence, entities } = validateStatementWrite(write);
     const incoming: Statement = { ...validated, status: "active" };
 
-    const existing = this.statements.get(incoming.id);
+    const existing = state.statements.get(incoming.id);
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
         throw new ConflictError(`statement ${incoming.id} already exists with different immutable content`);
@@ -56,21 +104,21 @@ export class InMemoryStatementStore implements StatementStore<object> {
       return structuredClone(existing);
     }
     for (const e of entities) {
-      const prior = this.entities.get(e.id);
+      const prior = state.entities.get(e.id);
       if (prior && JSON.stringify(prior) !== JSON.stringify(e)) {
         throw new ConflictError(`entity ${e.id} already exists with different content`);
       }
-      this.entities.set(e.id, structuredClone(e));
+      state.entities.set(e.id, structuredClone(e));
     }
     for (const e of evidence) {
-      const prior = this.evidence.get(e.id);
+      const prior = state.evidence.get(e.id);
       if (prior && JSON.stringify(prior) !== JSON.stringify(e)) {
         throw new ConflictError(`evidence ${e.id} already exists with different content`);
       }
-      this.evidence.set(e.id, structuredClone(e));
+      state.evidence.set(e.id, structuredClone(e));
     }
-    this.statements.set(incoming.id, incoming);
-    this.evidenceByStatement.set(incoming.id, evidence.map((e) => e.id));
+    state.statements.set(incoming.id, incoming);
+    state.evidenceByStatement.set(incoming.id, evidence.map((e) => e.id));
     return structuredClone(incoming);
   }
 

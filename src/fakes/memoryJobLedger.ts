@@ -1,6 +1,7 @@
 import { FencingError } from "../core/errors.js";
 import { ids } from "../core/ids.js";
 import type { JobWorkerLedger, WorkerJob } from "../jobs/worker.js";
+import { MemoryTransaction } from "./memoryTransaction.js";
 
 export type MemoryJobStatus = "pending" | "running" | "completed" | "dead";
 
@@ -143,7 +144,17 @@ export class InMemoryJobLedger implements JobWorkerLedger<object> {
       this.fenceFailures -= 1;
       throw new FencingError("scripted fence loss");
     }
-    return write({});
+    // Same shape as Neo4j's executeWrite: the callback receives a transaction
+    // whose writes are staged until commit; any throw rolls them all back.
+    const tx = new MemoryTransaction();
+    try {
+      const result = await write(tx);
+      tx.commit();
+      return result;
+    } catch (err) {
+      tx.rollback();
+      throw err;
+    }
   }
 
   async complete(jobId: string, claimGeneration: number, workerId: string): Promise<boolean> {

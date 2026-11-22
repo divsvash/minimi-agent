@@ -4,6 +4,7 @@ import { ConflictError, ValidationError } from "../core/errors.js";
 import type { Entity, Evidence, Statement } from "../contracts/schemas.js";
 import type { StatementWrite } from "../contracts/ports.js";
 import { InMemoryStatementStore } from "./memoryStatementStore.js";
+import { InMemoryJobLedger } from "./memoryJobLedger.js";
 
 const AT = "2026-11-19T00:00:00.000Z";
 
@@ -181,4 +182,48 @@ test("clear resets every index", async () => {
   assert.deepEqual(store.allEntities(), []);
   assert.equal(await store.byId("stmt:1"), null);
   assert.deepEqual(await store.forSubject("ent:subj"), []);
+});
+
+test("a fenced offline commit applies all staged inserts atomically", async () => {
+  const store = new InMemoryStatementStore();
+  const ledger = new InMemoryJobLedger();
+  ledger.enqueue("extract", {}, "rollback:commit");
+  const claimed = (await ledger.claimNext("w1"))!;
+
+  await ledger.commitFencedOutput(claimed.id, claimed.claimGeneration, "w1", async (tx) => {
+    await store.insert(tx, write());
+    await store.insert(tx, write({
+      statement: statement({ id: "stmt:2" }),
+      evidence: [evidence({ id: "ev:2" })],
+      entities: [entity("ent:subj"), entity("ent:obj")],
+    }));
+    assert.equal(store.size, 0, "staged writes are invisible until the transaction commits");
+  });
+
+  assert.deepEqual(store.allStatements().map((s) => s.id).sort(), ["stmt:1", "stmt:2"]);
+  assert.deepEqual(store.allEvidence().map((e) => e.id).sort(), ["ev:1", "ev:2"]);
+  assert.deepEqual(store.allEntities().map((e) => e.id).sort(), ["ent:obj", "ent:subj"]);
+});
+
+test("a failed second write rolls back the first: zero statements, evidence and entities", async () => {
+  const store = new InMemoryStatementStore();
+  const ledger = new InMemoryJobLedger();
+  ledger.enqueue("extract", {}, "rollback:fail");
+  const claimed = (await ledger.claimNext("w1"))!;
+
+  await assert.rejects(
+    () => ledger.commitFencedOutput(claimed.id, claimed.claimGeneration, "w1", async (tx) => {
+      await store.insert(tx, write());
+      await store.insert(tx, write({ statement: statement({ id: "stmt:1", predicate: "must_not_use" }) }));
+    }),
+    (err: unknown) => err instanceof ConflictError,
+    "the second insert conflicts with the first staged write",
+  );
+
+  assert.deepEqual(store.allStatements(), []);
+  assert.deepEqual(store.allEvidence(), []);
+  assert.deepEqual(store.allEntities(), []);
+  assert.equal(store.size, 0);
+  assert.deepEqual(store.evidenceFor("stmt:1"), []);
+  assert.deepEqual(store.entitiesFor("stmt:1"), []);
 });
