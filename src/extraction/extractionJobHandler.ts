@@ -85,7 +85,17 @@ export class ExtractionJobHandler<TX extends object> implements JobHandler<TX> {
             mentionName: entity.canonicalName,
             mentionType: entity.type,
             outcome: decision.outcome,
+            fromEntityId: entity.id,
             entityId: "entityId" in decision ? decision.entityId : undefined,
+            createdEntity: decision.outcome === "new_entity" && "entityId" in decision
+              ? {
+                ...structuredClone(entity),
+                id: decision.entityId,
+                status: "active",
+                createdAt: recordedAt,
+                updatedAt: recordedAt,
+              }
+              : undefined,
             candidates: decision.candidates,
             rationale: decision.rationale,
             recordedAt,
@@ -101,8 +111,24 @@ export class ExtractionJobHandler<TX extends object> implements JobHandler<TX> {
         if (this.deps.resolutions) {
           for (const outcome of resolutionOutcomes) {
             await this.deps.resolutions.putOutcome(tx, outcome);
-            if (outcome.outcome === "matched" && outcome.entityId) {
-              await this.deps.resolutions.addAlias(tx, outcome.entityId, [outcome.mentionName]);
+            // A `new_entity` decision's generated id must exist in the graph, not
+            // only in the audit record.
+            if (outcome.outcome === "new_entity" && outcome.createdEntity) {
+              await this.deps.resolutions.putEntity(tx, outcome.createdEntity);
+            }
+            const applied = outcome.outcome === "matched" || outcome.outcome === "new_entity";
+            if (applied && outcome.entityId && outcome.statementId && outcome.fromEntityId
+              && outcome.entityId !== outcome.fromEntityId) {
+              if (outcome.outcome === "matched") {
+                await this.deps.resolutions.addAlias(tx, outcome.entityId, [outcome.mentionName]);
+              }
+              // Re-point SUBJECT/OBJECT to the resolved identity. The statement
+              // id, its evidence, and its immutable properties stay as extracted.
+              await this.deps.resolutions.applyResolution(tx, {
+                statementId: outcome.statementId,
+                fromEntityId: outcome.fromEntityId,
+                toEntityId: outcome.entityId,
+              });
             }
           }
         }

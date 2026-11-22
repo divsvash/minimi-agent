@@ -2,11 +2,16 @@ import { z } from "zod";
 import { fixedClock } from "../core/clock.js";
 import { ValidationError } from "../core/errors.js";
 import {
-  EntitySchema, MergePlanSchema, ResolutionRequestSchema, SplitPlanSchema,
+  EntitySchema, EpisodeSchema, MergePlanSchema, ResolutionRequestSchema, SplitPlanSchema,
 } from "../contracts/schemas.js";
+import { ExtractionService } from "../extraction/extractEpisode.js";
+import { ExtractionJobHandler } from "../extraction/extractionJobHandler.js";
+import { InMemoryJobLedger } from "../fakes/memoryJobLedger.js";
 import { InMemoryResolutionStore } from "../fakes/memoryResolutionStore.js";
 import { ScriptedEmbeddingProvider } from "../fakes/scriptedEmbeddingProvider.js";
 import { InMemoryStatementStore } from "../fakes/memoryStatementStore.js";
+import { FakeLLMProvider } from "../fakes/providers.js";
+import { JobWorker } from "../jobs/worker.js";
 import { EntityResolutionService } from "../resolution/service.js";
 import type { SutHandler } from "./harness.js";
 
@@ -23,8 +28,10 @@ const LinkSeed = z.object({
 });
 
 const EntityResolutionInput = z.object({
-  mode: z.enum(["resolve", "merge", "split"]).default("resolve"),
+  mode: z.enum(["resolve", "merge", "split", "extract"]).default("resolve"),
   entities: z.array(EntitySchema).default([]),
+  episode: EpisodeSchema.optional(),
+  responses: z.array(z.string()).default([]),
   request: ResolutionRequestSchema.optional(),
   merge: MergePlanSchema.optional(),
   split: SplitPlanSchema.optional(),
@@ -53,8 +60,38 @@ export const entityResolutionHandler: SutHandler = async (input) => {
   let event: Record<string, unknown> | null = null;
 
   try {
-    for (let attempt = 0; attempt < cfg.repeats; attempt++) {
-      if (cfg.mode === "resolve") {
+    const attempts = cfg.mode === "extract" ? 1 : cfg.repeats;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (cfg.mode === "extract") {
+        if (!cfg.episode) throw new ValidationError("extract mode requires an episode");
+        let call = 0;
+        const responseText = () => {
+          const text = cfg.responses[Math.min(call, cfg.responses.length - 1)] ?? JSON.stringify({ candidates: [] });
+          call += 1;
+          return text;
+        };
+        const provider = new FakeLLMProvider(() => ({
+          text: responseText(),
+          model: "fake-llm-1",
+          usage: { inputTokens: 100, outputTokens: 50 },
+          finishReason: "stop",
+        }));
+        const handler = new ExtractionJobHandler<object>({
+          episodes: { byId: async (id) => (id === cfg.episode!.id ? cfg.episode! : null) },
+          extractor: new ExtractionService({ provider, clock, timeoutMs: 0 }),
+          statements,
+          resolver: service,
+          resolutions,
+          clock,
+        });
+        const ledger = new InMemoryJobLedger();
+        const worker = new JobWorker<object>(ledger, [handler], {
+          workerId: "eval-resolve-worker", leaseRenewMs: 0, idleDelayMs: 0,
+        });
+        ledger.enqueue("extract", { episodeId: cfg.episode.id }, `extract:${cfg.episode.id}`, { maxAttempts: 1 });
+        const jobOutcome = await worker.runOnce();
+        if (jobOutcome !== "completed") throw new ValidationError(`extract job ended as ${jobOutcome}`);
+      } else if (cfg.mode === "resolve") {
         if (!cfg.request) throw new ValidationError("resolve mode requires a request");
         const result = await service.resolve(cfg.request);
         decision = {
@@ -103,6 +140,19 @@ export const entityResolutionHandler: SutHandler = async (input) => {
     resolutions.splitEvents(),
     resolutions.outcomes(),
   ]);
+  const allStatements = statements.allStatements();
+  const applied = await Promise.all(outcomes
+    .filter((o) => o.entityId && o.fromEntityId)
+    .map(async (o) => ({
+      statementId: o.statementId ?? null,
+      fromEntityId: o.fromEntityId,
+      toEntityId: o.entityId,
+      outcome: o.outcome,
+      graphHasReference: o.statementId
+        ? (await resolutions.statementIdsForEntity(o.entityId!)).includes(o.statementId)
+        : false,
+      persistedEntity: Boolean(await resolutions.entityById(o.entityId!)),
+    })));
 
   return {
     status,
@@ -112,6 +162,8 @@ export const entityResolutionHandler: SutHandler = async (input) => {
     event,
     counts: {
       entities: entities.length,
+      statements: allStatements.length,
+      applied: applied.length,
       mergeEdges: edges.length,
       mergeEvents: mergeEvents.length,
       splitEvents: splitEvents.length,
@@ -124,6 +176,13 @@ export const entityResolutionHandler: SutHandler = async (input) => {
       aliases: e.aliases,
       status: e.status,
     })),
+    statements: allStatements.map((s) => ({
+      id: s.id,
+      subjectId: s.subjectId,
+      objectId: s.objectId ?? null,
+      evidenceCount: statements.evidenceFor(s.id).length,
+    })),
+    applied,
     edges: edges.map((e) => ({ from: e.from, to: e.to })),
     mergeEvents: mergeEvents.map((e) => ({ id: e.id, sourceId: e.sourceId, targetId: e.targetId, aliases: e.aliases })),
     splitEvents: splitEvents.map((e) => ({

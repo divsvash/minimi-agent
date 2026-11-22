@@ -401,6 +401,10 @@ export const ResolutionOutcomeSchema = z.object({
   mentionName: z.string().min(1),
   mentionType: EntityTypeSchema.optional(),
   outcome: z.enum(["matched", "new_entity", "ambiguous", "review_required"]),
+  /** The original mention-scoped entity id whose references are being resolved. */
+  fromEntityId: z.string().optional(),
+  /** Persisted when the decision creates an identity, so audit and graph agree. */
+  createdEntity: EntitySchema.optional(),
   entityId: z.string().optional(),
   candidates: z.array(ScoredCandidateSchema),
   rationale: z.string(),

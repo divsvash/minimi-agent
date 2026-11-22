@@ -30,6 +30,8 @@
     "ent-different-alias-same-entity.json": "f0e4e2c5837e14e22c83c44fefa5b82d630c3372d0d8fb9547e4706e2106be7d",
     "ent-duplicate-merge-retries.json": "d5c85f22dc3e6f6ecd68a80a3a75e562e18c248e3a05ea78578778769d3c2d5f",
     "ent-explicit-merge-success.json": "8134aa59e7660ea9ca950025926b823c3d5b677821aff19d03cb3d6c04411ce4",
+    "ent-extraction-applies-matched-identity.json": "3f555249c5deda87da469f9d2bc0df20faf983dfecee8285ff5a79d0fec594f4",
+    "ent-extraction-persists-new-entity.json": "2e93f272869515d4174bc53c6668cef887a7ceb52cea8bd588c2b5d85049b714",
     "ent-merge-cycle-rejected.json": "4a2d6cc5b7c4fe3a2ad3dcbfbb6d75f41652f73495361678f4305eace4983c37",
     "ent-multiple-plausible-candidates.json": "09325d55f743ccd6fe3112b40e6dd66133e35e262910a37639871373a0867d8e",
     "ent-no-existing-candidate.json": "f0ffbdf0ff8f2737f7caa64c072d40e6e1a9d10ba01ef2b5a7417d71a615bfc9",

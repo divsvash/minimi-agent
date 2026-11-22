@@ -180,6 +180,35 @@ export class InMemoryResolutionStore implements ResolutionStore<object>, Snapsho
     });
   }
 
+  async applyResolution(
+    tx: object,
+    args: { statementId: string; fromEntityId: string; toEntityId: string },
+  ): Promise<void> {
+    const state = this.state(tx);
+    const statement = this.statements.byIdIn(tx, args.statementId);
+    if (!statement) return;
+    const change: { subjectId?: string; objectId?: string } = { ...state.reassigned.get(args.statementId) };
+    const subjectId = change.subjectId ?? statement.subjectId;
+    const objectId = statement.objectKind === "entity" ? (change.objectId ?? statement.objectId) : undefined;
+    if (subjectId === args.fromEntityId) change.subjectId = args.toEntityId;
+    if (objectId === args.fromEntityId) change.objectId = args.toEntityId;
+    state.reassigned.set(args.statementId, change);
+
+    // Keep eval-only synthetic links in step with real graph reassignment.
+    const sourceSeed = state.seeded.get(args.fromEntityId);
+    if (sourceSeed?.statementIds.includes(args.statementId)) {
+      state.seeded.set(args.fromEntityId, {
+        statementIds: sourceSeed.statementIds.filter((id) => id !== args.statementId),
+        evidenceIds: sourceSeed.evidenceIds,
+      });
+      const targetSeed = state.seeded.get(args.toEntityId) ?? { statementIds: [], evidenceIds: [] };
+      state.seeded.set(args.toEntityId, {
+        statementIds: [...new Set([...targetSeed.statementIds, args.statementId])],
+        evidenceIds: targetSeed.evidenceIds,
+      });
+    }
+  }
+
   async putMerge(tx: object, event: MergeEvent, sourceId: string, target: Entity): Promise<void> {
     const state = this.state(tx);
     state.mergeEvents.set(event.id, structuredClone(event));

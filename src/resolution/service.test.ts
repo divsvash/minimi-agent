@@ -172,11 +172,66 @@ test("extraction integration records resolutions inside the fenced commit", asyn
 
   assert.equal(await worker.runOnce(), "completed");
   assert.equal(statements.size, 1);
+  const statement = statements.allStatements()[0]!;
+  const originalObjectId = statement.objectId!;
   const outcomes = await store.outcomes();
   assert.equal(outcomes.length, 2, "subject and object mentions are both recorded");
   assert.ok(outcomes.some((o) => o.outcome === "matched" && o.entityId === "ent-postgres"));
   assert.deepEqual(await store.mergeEdges(), [], "a matched alias link is not a merge");
-  assert.equal(statements.allStatements()[0]!.subjectId.startsWith("ent:"), true, "slice 3 statement ids are untouched");
+  assert.equal(statement.subjectId.startsWith("ent:"), true, "slice 3 statement ids are untouched");
+
+  // The decision is now applied to the graph's identity references, while the
+  // statement id, its evidence and its immutable properties stay as extracted.
+  assert.ok((await store.statementIdsForEntity("ent-postgres")).includes(statement.id));
+  assert.ok(!(await store.statementIdsForEntity(originalObjectId)).includes(statement.id));
+  assert.equal((await statements.byId(statement.id))!.objectId, originalObjectId);
+  assert.equal(statements.evidenceFor(statement.id).length, 1);
+  assert.ok((await store.entityById("ent-postgres"))!.aliases.includes("Postgres"));
+});
+
+test("a new_entity decision persists its generated id and re-points the statement", async () => {
+  const clock = fixedClock(new Date(AT));
+  const TEXT = "We should use Postgres for the new service.";
+  const episode: Episode = {
+    id: "ep-new", externalId: "ext-new", sessionId: "sess", seq: 0,
+    role: "user", text: TEXT, occurredAt: "2026-11-16T09:00:00.000Z",
+    precision: "second", tz: "UTC", source: "chat", createdAt: "2026-11-16T09:00:00.000Z",
+  };
+  const provider = new FakeLLMProvider(() => ({
+    text: JSON.stringify({ candidates: [{
+      subject: { name: "We" },
+      predicate: "should use",
+      object: { kind: "entity", name: "Postgres", type: "product" },
+      polarity: "positive", modality: "proposed", decisionStatus: "proposed", confidence: 0.8,
+      evidence: { quote: TEXT, spanStart: 0, spanEnd: TEXT.length },
+    }] }),
+    model: "fake-llm-1", usage: { inputTokens: 10, outputTokens: 5 }, finishReason: "stop",
+  }));
+  const statements = new InMemoryStatementStore();
+  const store = new InMemoryResolutionStore(statements, clock);
+  const handler = new ExtractionJobHandler<object>({
+    episodes: { byId: async () => episode },
+    extractor: new ExtractionService({ provider, clock, timeoutMs: 0 }),
+    statements,
+    resolver: new EntityResolutionService(store, { clock }),
+    resolutions: store,
+    clock,
+  });
+  const ledger = new InMemoryJobLedger();
+  const worker = new JobWorker<object>(ledger, [handler], { workerId: "w", leaseRenewMs: 0, idleDelayMs: 0 });
+  ledger.enqueue("extract", { episodeId: episode.id }, "extract:new", { maxAttempts: 1 });
+
+  assert.equal(await worker.runOnce(), "completed");
+  const statement = statements.allStatements()[0]!;
+  const originalObjectId = statement.objectId!;
+  const created = (await store.outcomes()).filter((o) => o.outcome === "new_entity" && o.createdEntity);
+  assert.equal(created.length, 2, "both mentions resolve to new identities");
+  for (const outcome of created) {
+    const id = outcome.createdEntity!.id;
+    assert.ok(await store.entityById(id), "the generated entity is persisted, not just recorded");
+    assert.ok((await store.statementIdsForEntity(id)).includes(statement.id), "its references are re-pointed");
+  }
+  assert.equal((await statements.byId(statement.id))!.objectId, originalObjectId, "statement content is unchanged");
 });
 
 test("a fenced-out extraction commits neither statements nor resolution outcomes", async () => {
@@ -214,4 +269,5 @@ test("a fenced-out extraction commits neither statements nor resolution outcomes
   assert.equal(await worker.runOnce(), "stale");
   assert.equal(statements.size, 0);
   assert.deepEqual(await store.outcomes(), [], "staged resolution output rolls back with the fence");
+  assert.deepEqual(await store.entities(), [], "no generated entity survives a lost fence");
 });

@@ -123,6 +123,26 @@ export class Neo4jResolutionStore implements ResolutionStore<ManagedTransaction>
     );
   }
 
+  async applyResolution(
+    tx: ManagedTransaction,
+    args: { statementId: string; fromEntityId: string; toEntityId: string },
+  ): Promise<void> {
+    // Statement properties (id, evidence, subjectId/objectId, contentHash) stay
+    // as extracted; only the graph's identity edges are re-pointed.
+    await tx.run(
+      `MATCH (s:Statement {id: $statementId})-[r:SUBJECT]->(from:Entity {id: $fromEntityId})
+       DELETE r
+       MERGE (s)-[:SUBJECT]->(to:Entity {id: $toEntityId})`,
+      args,
+    );
+    await tx.run(
+      `MATCH (s:Statement {id: $statementId})-[r:OBJECT]->(from:Entity {id: $fromEntityId})
+       DELETE r
+       MERGE (s)-[:OBJECT]->(to:Entity {id: $toEntityId})`,
+      args,
+    );
+  }
+
   async putMerge(
     tx: ManagedTransaction,
     event: MergeEvent,
@@ -201,13 +221,17 @@ export class Neo4jResolutionStore implements ResolutionStore<ManagedTransaction>
        ON CREATE SET o.resolutionId = $resolutionId, o.episodeId = $episodeId,
                      o.statementId = $statementId, o.mentionName = $mentionName,
                      o.mentionType = $mentionType, o.outcome = $outcome,
+                     o.fromEntityId = $fromEntityId, o.createdEntity = $createdEntity,
                      o.entityId = $entityId, o.candidates = $candidates,
                      o.rationale = $rationale, o.recordedAt = datetime($at)`,
       {
         id: outcome.id, resolutionId: outcome.resolutionId,
         episodeId: outcome.episodeId ?? null, statementId: outcome.statementId ?? null,
         mentionName: outcome.mentionName, mentionType: outcome.mentionType ?? null,
-        outcome: outcome.outcome, entityId: outcome.entityId ?? null,
+        outcome: outcome.outcome,
+        fromEntityId: outcome.fromEntityId ?? null,
+        createdEntity: outcome.createdEntity ? JSON.stringify(outcome.createdEntity) : null,
+        entityId: outcome.entityId ?? null,
         candidates: JSON.stringify(outcome.candidates),
         rationale: outcome.rationale, at: outcome.recordedAt,
       },
@@ -269,6 +293,10 @@ function toOutcome(props: Record<string, unknown>): ResolutionOutcome {
     mentionName: String(props.mentionName),
     mentionType: props.mentionType == null ? undefined : (props.mentionType as Entity["type"]),
     outcome: props.outcome as ResolutionOutcome["outcome"],
+    fromEntityId: props.fromEntityId == null ? undefined : String(props.fromEntityId),
+    createdEntity: typeof props.createdEntity === "string"
+      ? JSON.parse(props.createdEntity)
+      : (props.createdEntity as ResolutionOutcome["createdEntity"]),
     entityId: props.entityId == null ? undefined : String(props.entityId),
     candidates: typeof props.candidates === "string" ? JSON.parse(props.candidates) : (props.candidates as ResolutionOutcome["candidates"]),
     rationale: String(props.rationale ?? ""), recordedAt: iso(props.recordedAt),

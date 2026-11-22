@@ -1,0 +1,51 @@
+{
+  "id": "ent-extraction-applies-matched-identity",
+  "title": "Integration: a matched resolution re-points the statement's graph references",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "extract",
+    "entities": [
+      {
+        "id": "ent-postgres",
+        "type": "product",
+        "canonicalName": "Postgres",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "episode": {
+      "id": "ep-ent-extract-match",
+      "externalId": "ext-ent-extract-match",
+      "sessionId": "sess-1",
+      "seq": 20,
+      "role": "user",
+      "text": "We should use Postgres for the new service.",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "UTC",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z"
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ]
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.statements", "op": "eq", "value": 1 },
+    { "path": "counts.applied", "op": "eq", "value": 2 },
+    { "path": "applied.0.graphHasReference", "op": "eq", "value": true },
+    { "path": "applied.1.graphHasReference", "op": "eq", "value": true },
+    { "path": "applied.0.persistedEntity", "op": "eq", "value": true },
+    { "path": "applied.1.persistedEntity", "op": "eq", "value": true },
+    { "path": "statements.0.evidenceCount", "op": "eq", "value": 1 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "A matched identity is applied inside the fence: both mentions' graph references point to persisted resolved entities while the single statement keeps its evidence.",
+  "slice": 4
+}

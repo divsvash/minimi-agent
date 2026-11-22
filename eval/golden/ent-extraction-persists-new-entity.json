@@ -1,0 +1,42 @@
+{
+  "id": "ent-extraction-persists-new-entity",
+  "title": "Integration: a new_entity decision persists the generated id and re-points the statement",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "extract",
+    "episode": {
+      "id": "ep-ent-extract-new",
+      "externalId": "ext-ent-extract-new",
+      "sessionId": "sess-1",
+      "seq": 21,
+      "role": "user",
+      "text": "We should use Postgres for the new service.",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "UTC",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z"
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ]
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.statements", "op": "eq", "value": 1 },
+    { "path": "counts.applied", "op": "eq", "value": 2 },
+    { "path": "applied.0.outcome", "op": "eq", "value": "new_entity" },
+    { "path": "applied.1.outcome", "op": "eq", "value": "new_entity" },
+    { "path": "applied.0.persistedEntity", "op": "eq", "value": true },
+    { "path": "applied.0.graphHasReference", "op": "eq", "value": true },
+    { "path": "applied.1.persistedEntity", "op": "eq", "value": true },
+    { "path": "applied.1.graphHasReference", "op": "eq", "value": true },
+    { "path": "statements.0.evidenceCount", "op": "eq", "value": 1 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Generated identities are persisted through the resolution store and the statement's references follow them; evidence and statement identity are unchanged.",
+  "slice": 4
+}

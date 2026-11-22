@@ -147,6 +147,12 @@ export interface ResolutionStore<TX extends object = object> {
   /** Reassigns only the listed statements/aliases and records the audit event. */
   putSplit(tx: TX, event: SplitEvent, source: Entity, created: Entity): Promise<void>;
   addAlias(tx: TX, entityId: string, aliases: string[]): Promise<void>;
+  /**
+   * Re-point a statement's SUBJECT/OBJECT references from the original
+   * mention-scoped entity to the resolved identity. The statement id, evidence
+   * and immutable statement properties are never changed.
+   */
+  applyResolution(tx: TX, args: { statementId: string; fromEntityId: string; toEntityId: string }): Promise<void>;
   putOutcome(tx: TX, outcome: ResolutionOutcome): Promise<void>;
 }
 

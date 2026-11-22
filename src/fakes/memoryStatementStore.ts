@@ -63,6 +63,13 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     return s ? structuredClone(s) : null;
   }
 
+  /** Transaction-aware read for other stores committing in the same fence. */
+  byIdIn(tx: object, id: string): Statement | null {
+    const state = isMemoryTransaction(tx) ? tx.workingCopy<StoreState>(this) : this.liveState();
+    const s = state.statements.get(id);
+    return s ? structuredClone(s) : null;
+  }
+
   async forSubject(subjectId: string): Promise<Statement[]> {
     return this.sortedStatements().filter((s) => s.subjectId === subjectId).map((s) => structuredClone(s));
   }
