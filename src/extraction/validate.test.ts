@@ -296,6 +296,32 @@ test("statement identity is stable across scope-key and qualification ordering",
   );
 });
 
+test("statement identity follows the predicateText casing persisted in the qualifier", () => {
+  const lower = run([candidate({ predicate: "should use" })]).accepted[0]!.statement;
+  const upper = run([candidate({ predicate: "SHOULD USE" })]).accepted[0]!.statement;
+  assert.equal(lower.predicate, upper.predicate, "both casings normalize to the same predicate");
+  assert.notEqual(lower.predicateQualifier!.predicateText, upper.predicateQualifier!.predicateText);
+  assert.notEqual(lower.id, upper.id, "different persisted predicateText must not share a statement id");
+});
+
+test("statement identity includes the persisted confidence", () => {
+  const low = run([candidate({ confidence: 0.8 })]).accepted[0]!.statement;
+  const high = run([candidate({ confidence: 0.9 })]).accepted[0]!.statement;
+  assert.equal(low.confidence, 0.8);
+  assert.equal(high.confidence, 0.9);
+  assert.notEqual(low.id, high.id, "a different immutable confidence must not reuse a statement id");
+});
+
+test("statement identity includes the object entity type", () => {
+  const asProduct = run([candidate({ object: { kind: "entity", name: "Postgres", type: "product" } })]).accepted[0]!.statement;
+  const asConcept = run([candidate({ object: { kind: "entity", name: "Postgres", type: "concept" } })]).accepted[0]!.statement;
+  const asDefault = run([candidate({ object: { kind: "entity", name: "Postgres" } })]).accepted[0]!.statement;
+  assert.notEqual(asProduct.objectId, asConcept.objectId, "object entity ids are type-derived");
+  assert.notEqual(asProduct.id, asConcept.id, "a different objectId must change the statement id");
+  assert.equal(asDefault.objectId, asConcept.objectId, "an omitted type must use the same 'concept' default");
+  assert.equal(asDefault.id, asConcept.id, "the type default must not mint a distinguishable id");
+});
+
 test("a changed extraction version produces a distinguishable statement id", () => {
   const one = run([candidate()]).accepted[0]!.statement.id;
   const two = validateCandidates({

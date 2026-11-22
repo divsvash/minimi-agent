@@ -200,6 +200,8 @@ function validateTemporal(candidate: CandidateStatement, episode: Episode): stri
 function identityTuple(
   candidate: CandidateStatement,
   predicate: string,
+  predicateText: string | null,
+  objectType: Entity["type"] | null,
   scope: Record<string, string> | null,
   qualifications: readonly string[] | undefined,
 ): unknown[] {
@@ -207,10 +209,20 @@ function identityTuple(
     normalizeMention(candidate.subject.name).toLocaleLowerCase(),
     candidate.subject.type ?? "concept",
     predicate,
+    // The exact original predicate casing stored in `predicateQualifier` is part
+    // of immutable content, so it must be part of identity too. Otherwise two
+    // casings share an id but conflict on the store's contentHash (ADR-003).
+    predicateText,
     candidate.object.kind,
     candidate.object.kind === "entity"
       ? normalizeMention(candidate.object.name).toLocaleLowerCase()
       : candidate.object.value,
+    // The object entity id is derived from its type as well as its name, so a
+    // different type changes the persisted objectId and must change the id.
+    objectType,
+    // Confidence is persisted and hashed in contentHash; include it so a retry
+    // with a different confidence cannot reuse an id with different content.
+    candidate.confidence,
     candidate.polarity,
     candidate.modality,
     candidate.decisionStatus ?? null,
@@ -333,7 +345,13 @@ export function validateCandidates(args: {
       return;
     }
 
-    const identity = JSON.stringify(identityTuple(candidate, predicate, scope, qualifications));
+    // Compute the exact predicateText and object entity type once, so the values
+    // hashed into identity are the same ones written to persisted content.
+    const predicateText = normalizePredicate(candidate.predicate) !== candidate.predicate.trim().toLocaleLowerCase()
+      ? candidate.predicate.trim()
+      : null;
+    const objectType = candidate.object.kind === "entity" ? (candidate.object.type ?? "concept") : null;
+    const identity = JSON.stringify(identityTuple(candidate, predicate, predicateText, objectType, scope, qualifications));
     const statementId = "stmt:" + ids.sha256([extractionVersion, episode.id, identity].join("|"));
     if (seen.has(statementId)) {
       duplicateCandidates += 1;
@@ -364,9 +382,7 @@ export function validateCandidates(args: {
     if (candidate.decisionStatus) qualifier.decisionStatus = candidate.decisionStatus;
     if (candidate.temporal?.expression) qualifier.temporalExpression = candidate.temporal.expression;
     if (qualifications?.length) qualifier.qualifications = JSON.stringify(qualifications);
-    if (normalizePredicate(candidate.predicate) !== candidate.predicate.trim().toLocaleLowerCase()) {
-      qualifier.predicateText = candidate.predicate.trim();
-    }
+    if (predicateText !== null) qualifier.predicateText = predicateText;
     for (const [key, value] of Object.entries(scope ?? {})) qualifier[key] = value;
     qualifier.extractionStatus = "accepted";
     qualifier.extractionSchema = EXTRACTION_SCHEMA_VERSION;
