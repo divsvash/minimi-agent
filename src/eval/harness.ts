@@ -176,6 +176,7 @@ export async function runCases(cases: GoldenCase[], registry: SutRegistry): Prom
     metrics,
     challenge: summarizeScenarios(results),
     cost: summarizeCost(results),
+    extraction: summarizeExtractionScores(results),
     failures: metrics.failed,
   };
 }

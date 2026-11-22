@@ -1,0 +1,80 @@
+{
+  "id": "adv-extraction-invalid-span-rejected",
+  "title": "Adversarial: a quote that does not match its span fails the whole extraction",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"evidence\":{\"quote\":\"We should use Postgres\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "should use",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "proposed",
+        "decisionStatus": "proposed"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0,
+      "description": "all-or-nothing: no partial commit"
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.entities",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "evidence quote does not exactly match the source span"
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "no statements will be persisted"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": null,
+      "description": "a failed run is not scored"
+    }
+  ],
+  "metrics": [
+    "span_validity",
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Quote 'We should use Postgres' is 22 chars but claims spanEnd 43. One bad candidate fails the episode: the structured reason must survive on the job error for inspection.",
+  "slice": 3
+}

@@ -1,0 +1,88 @@
+{
+  "id": "extr-negation-constraint",
+  "title": "Extraction: an explicit prohibition keeps negative polarity and constraint category",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-negation",
+      "externalId": "ext-negation",
+      "sessionId": "sess-1",
+      "seq": 3,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We must not use MongoDB for the core database."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"must not use\",\"object\":{\"kind\":\"entity\",\"name\":\"MongoDB\",\"type\":\"product\"},\"polarity\":\"negative\",\"modality\":\"asserted\",\"category\":\"constraint\",\"evidence\":{\"quote\":\"We must not use MongoDB for the core database.\",\"spanStart\":0,\"spanEnd\":46}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "must not use",
+        "object": "MongoDB",
+        "polarity": "negative",
+        "modality": "asserted"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.polarity",
+      "op": "eq",
+      "value": "negative"
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "asserted"
+    },
+    {
+      "path": "statements.0.predicateQualifier.statementType",
+      "op": "eq",
+      "value": "constraint"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.unsupportedAssertionRate",
+      "op": "eq",
+      "value": 0
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "negation_modality",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Negation must survive extraction: polarity=negative requires a negation cue in the cited sentence, and the prohibition is a constraint rather than a plain fact.",
+  "slice": 3
+}

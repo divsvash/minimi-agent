@@ -1,0 +1,53 @@
+{
+  "id": "adv-extraction-invalid-json-rejected",
+  "title": "Adversarial: a non-JSON provider response is rejected, not guessed at",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "not json at all"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "extraction response is not valid JSON"
+    }
+  ],
+  "metrics": [
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Untrusted model output that is not JSON must be rejected outright; nothing may be inferred from partially readable text.",
+  "slice": 3
+}

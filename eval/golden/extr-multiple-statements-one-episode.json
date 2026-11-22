@@ -1,0 +1,105 @@
+{
+  "id": "extr-multiple-statements-one-episode",
+  "title": "Extraction: two statements from one episode, each with its own exact span",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-multi",
+      "externalId": "ext-multi",
+      "sessionId": "sess-1",
+      "seq": 9,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We use Terraform for infrastructure and PagerDuty for alerts."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"Terraform\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"We use Terraform for infrastructure\",\"spanStart\":0,\"spanEnd\":35}},{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"PagerDuty\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"and PagerDuty for alerts\",\"spanStart\":36,\"spanEnd\":60}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "use",
+        "object": "Terraform",
+        "polarity": "positive",
+        "modality": "asserted"
+      },
+      {
+        "subject": "We",
+        "predicate": "use",
+        "object": "PagerDuty",
+        "polarity": "positive",
+        "modality": "asserted"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "statements.0.evidence.0.exact",
+      "op": "eq",
+      "value": true
+    },
+    {
+      "path": "statements.1.evidence.0.exact",
+      "op": "eq",
+      "value": true
+    },
+    {
+      "path": "statements.0.evidence.0.spanStart",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "statements.1.evidence.0.spanStart",
+      "op": "eq",
+      "value": 36
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.provenanceValidity",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.unsupportedAssertionRate",
+      "op": "eq",
+      "value": 0
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "extraction_recall",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Both clauses must be extracted as separate statements with non-overlapping exact spans; precision/recall are 1 only because both labels are matched and nothing extra is invented.",
+  "slice": 3
+}

@@ -1,0 +1,78 @@
+{
+  "id": "extr-uncertainty-with-qualification",
+  "title": "Extraction: hedged claim keeps modality=uncertain and its verbatim qualification",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-uncertain",
+      "externalId": "ext-uncertain",
+      "sessionId": "sess-1",
+      "seq": 6,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "I think Attio is too expensive for a small team, at least for now."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"Attio\"},\"predicate\":\"is too expensive\",\"object\":{\"kind\":\"literal\",\"value\":\"too expensive\"},\"polarity\":\"positive\",\"modality\":\"uncertain\",\"qualifications\":[\"at least for now\"],\"evidence\":{\"quote\":\"I think Attio is too expensive for a small team, at least for now.\",\"spanStart\":0,\"spanEnd\":66}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "Attio",
+        "predicate": "is too expensive",
+        "object": "too expensive",
+        "polarity": "positive",
+        "modality": "uncertain"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "uncertain"
+    },
+    {
+      "path": "statements.0.predicateQualifier.qualifications",
+      "op": "includes",
+      "value": "at least for now"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "negation_modality",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'I think' is a hedge: modality must stay uncertain and the qualification must be carried verbatim in predicateQualifier rather than dropped.",
+  "slice": 3
+}

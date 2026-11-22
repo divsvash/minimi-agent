@@ -1,0 +1,84 @@
+{
+  "id": "extr-question-kept-as-question",
+  "title": "Extraction: a question is preserved as questioned, never as a fact",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-question",
+      "externalId": "ext-question",
+      "sessionId": "sess-1",
+      "seq": 4,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "Should we use Redis or Postgres for caching?"
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"we\"},\"predicate\":\"asked_about\",\"object\":{\"kind\":\"entity\",\"name\":\"Redis\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"questioned\",\"category\":\"question\",\"evidence\":{\"quote\":\"Should we use Redis or Postgres for caching?\",\"spanStart\":0,\"spanEnd\":44}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "we",
+        "predicate": "asked_about",
+        "object": "Redis",
+        "polarity": "positive",
+        "modality": "questioned"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "questioned"
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "neq",
+      "value": "asserted",
+      "description": "a question must never become a fact"
+    },
+    {
+      "path": "statements.0.predicateQualifier.statementType",
+      "op": "eq",
+      "value": "question"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "negation_modality",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "The only admissible rendering of a question is modality=questioned (asked_about meta); extracting it as asserted would fabricate a decision that was never made.",
+  "slice": 3
+}

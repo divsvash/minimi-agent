@@ -1,6 +1,6 @@
 import { systemClock, type Clock } from "../core/clock.js";
 import { ProviderError, ProviderTimeoutError, ValidationError } from "../core/errors.js";
-import { ExtractResultSchema, type Episode } from "../contracts/schemas.js";
+import { ExtractResultSchema, type CandidateStatement, type Episode } from "../contracts/schemas.js";
 import type { LLMProvider, LLMResponse, StatementWrite } from "../contracts/ports.js";
 import {
   EXTRACTION_PROMPT_HASH, EXTRACTION_PROMPT_VERSION, buildExtractionMessages,
@@ -26,9 +26,26 @@ export interface ExtractionResult {
   extractionPromptHash: string;
   extractionVersion: string;
   accepted: StatementWrite[];
+  /** Source candidates behind `accepted`, index-aligned with it. */
+  acceptedCandidates: CandidateStatement[];
   rejected: RejectedCandidate[];
   duplicateCandidates: number;
   providerCalls: number;
+}
+
+/**
+ * A ValidationError whose message carries the structured issues. Job `lastError`
+ * stores only `message`, so the details must be inside it for a dead job to remain
+ * inspectable (Slice 3: "record structured validation details in the job error state").
+ */
+function validationError(message: string, issues: unknown): ValidationError {
+  let detail: string;
+  try {
+    detail = JSON.stringify(issues);
+  } catch {
+    detail = String(issues);
+  }
+  return new ValidationError(`${message}: ${detail}`, issues);
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -58,13 +75,13 @@ export function parseExtractionResponse(text: string): ReturnType<typeof Extract
   try {
     raw = JSON.parse(stripCodeFence(text));
   } catch (err) {
-    throw new ValidationError("extraction response is not valid JSON", {
+    throw validationError("extraction response is not valid JSON", {
       cause: err instanceof Error ? err.message : String(err),
     });
   }
   const parsed = ExtractResultSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new ValidationError("extraction response failed schema validation", parsed.error.issues);
+    throw validationError("extraction response failed schema validation", parsed.error.issues);
   }
   return parsed.data;
 }
@@ -122,10 +139,14 @@ export class ExtractionService {
       recordedAt,
     });
 
-    if (mapped.accepted.length === 0 && mapped.rejected.length > 0) {
-      throw new ValidationError(
-        `all ${mapped.rejected.length} extracted candidate(s) failed validation`,
-        mapped.rejected.map((r) => ({ index: r.index, errors: r.errors })),
+    // All-or-nothing per episode: a single malformed candidate fails the whole
+    // extraction so that no partial set of statements is ever persisted. The job
+    // retries and then dead-letters with these details in `lastError`.
+    if (mapped.rejected.length > 0) {
+      const issues = mapped.rejected.map((r) => ({ index: r.index, errors: r.errors }));
+      throw validationError(
+        `extraction rejected: ${mapped.rejected.length} of ${mapped.accepted.length + mapped.rejected.length} candidate(s) failed validation; no statements will be persisted`,
+        issues,
       );
     }
 
@@ -135,6 +156,7 @@ export class ExtractionService {
       extractionPromptHash: EXTRACTION_PROMPT_HASH,
       extractionVersion,
       accepted: mapped.accepted,
+      acceptedCandidates: mapped.acceptedCandidates,
       rejected: mapped.rejected,
       duplicateCandidates: mapped.duplicateCandidates,
       providerCalls: attempts,

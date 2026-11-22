@@ -1,0 +1,94 @@
+{
+  "id": "extr-accepted-decision",
+  "title": "Extraction: an explicit past decision is stored as decided/accepted",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-decided",
+      "externalId": "ext-decided",
+      "sessionId": "sess-1",
+      "seq": 2,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We decided to go with Attio for the CRM."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"go with\",\"object\":{\"kind\":\"entity\",\"name\":\"Attio\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"decided\",\"decisionStatus\":\"accepted\",\"category\":\"decision\",\"evidence\":{\"quote\":\"We decided to go with Attio for the CRM.\",\"spanStart\":0,\"spanEnd\":40}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "go with",
+        "object": "Attio",
+        "polarity": "positive",
+        "modality": "decided",
+        "decisionStatus": "accepted"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "decided"
+    },
+    {
+      "path": "statements.0.predicateQualifier.decisionStatus",
+      "op": "eq",
+      "value": "accepted"
+    },
+    {
+      "path": "statements.0.predicateQualifier.statementType",
+      "op": "eq",
+      "value": "decision"
+    },
+    {
+      "path": "statements.0.epistemicStatus",
+      "op": "eq",
+      "value": "user_asserted"
+    },
+    {
+      "path": "statements.0.evidence.0.exact",
+      "op": "eq",
+      "value": true
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.unsupportedAssertionRate",
+      "op": "eq",
+      "value": 0
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "extraction_recall",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'decided' is the one modality allowed to carry decisionStatus=accepted; epistemic status follows the user role rather than being invented.",
+  "slice": 3
+}

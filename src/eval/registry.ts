@@ -2,12 +2,13 @@ import { z } from "zod";
 import { dayRangeUtc } from "../core/time.js";
 import { EpisodeSchema, type Episode } from "../contracts/schemas.js";
 import { InMemoryEpisodeStore } from "../fakes/memoryEpisodeStore.js";
+import { extractionEpisodeHandler } from "./extractionSut.js";
 import type { SutRegistry } from "./harness.js";
 
 /**
- * System-under-test handlers registered in Slice 2. Only what is actually built
- * and verifiable offline is wired up. Everything conversational/extraction/research
- * arrives with its slice and is registered here then.
+ * System-under-test handlers. Only what is actually built and verifiable offline
+ * is registered. Each entry names the slice that delivered it; everything else
+ * stays declarative (validated and drift-checked, reported as `pending`).
  */
 
 const DayRangeInput = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), tz: z.string().min(1) });
@@ -53,4 +54,12 @@ export const sutRegistry: SutRegistry = {
       episodes: items.map(episodeSummary),
     };
   },
+
+  /**
+   * Slice 3 extraction: episode -> provider -> validated candidates -> fenced
+   * commit -> provenance-backed statements. Runs the real worker/handler/store
+   * over a fake provider and an offline fence twin; every output is labelled
+   * `provider: fake-llm-1` and `semanticQuality: not_measured`.
+   */
+  "extraction.episode": extractionEpisodeHandler,
 };

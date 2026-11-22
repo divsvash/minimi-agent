@@ -1,0 +1,49 @@
+{
+  "id": "adv-extraction-object-outside-span-rejected",
+  "title": "Adversarial: an object missing from the cited span is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-obj-bad",
+      "externalId": "ext-obj-bad",
+      "sessionId": "sess-1",
+      "seq": 15,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We decided to go with Attio for the CRM."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"go with\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"decided\",\"decisionStatus\":\"accepted\",\"evidence\":{\"quote\":\"We decided to go\",\"spanStart\":0,\"spanEnd\":16}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "object 'Postgres' does not appear in the cited source span"
+    }
+  ],
+  "metrics": [
+    "span_validity",
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "The object must appear inside the quoted evidence span; otherwise the span and the claim disagree and nothing may be persisted.",
+  "slice": 3
+}

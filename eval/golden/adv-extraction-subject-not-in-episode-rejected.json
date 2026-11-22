@@ -1,0 +1,48 @@
+{
+  "id": "adv-extraction-subject-not-in-episode-rejected",
+  "title": "Adversarial: an invented subject is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-subj-bad",
+      "externalId": "ext-subj-bad",
+      "sessionId": "sess-1",
+      "seq": 14,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "Thanks, that helps!"
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"MongoDB\"},\"predicate\":\"helps\",\"object\":{\"kind\":\"literal\",\"value\":\"helps\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"evidence\":{\"quote\":\"Thanks, that helps!\",\"spanStart\":0,\"spanEnd\":19}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "subject 'MongoDB' does not appear in the source episode"
+    }
+  ],
+  "metrics": [
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Subjects must be mentions from the episode; anything else is an invented entity and the extraction must fail rather than persist it.",
+  "slice": 3
+}

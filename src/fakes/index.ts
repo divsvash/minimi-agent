@@ -11,3 +11,4 @@ export {
 export { FakeResearchProvider, researchFixtures, type ResearchScript } from "./research.js";
 export { InMemoryEpisodeStore } from "./memoryEpisodeStore.js";
 export { InMemoryStatementStore } from "./memoryStatementStore.js";
+export { InMemoryJobLedger, type MemoryJob, type MemoryJobStatus } from "./memoryJobLedger.js";

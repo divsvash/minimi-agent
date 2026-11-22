@@ -1,0 +1,49 @@
+{
+  "id": "adv-extraction-hypothetical-as-decided-rejected",
+  "title": "Adversarial: rendering a hypothetical as decided is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-hyp-dec",
+      "externalId": "ext-hyp-dec",
+      "sessionId": "sess-1",
+      "seq": 12,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "If we switched to ClickHouse, queries would be faster."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"we\"},\"predicate\":\"switch to\",\"object\":{\"kind\":\"entity\",\"name\":\"ClickHouse\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"decided\",\"decisionStatus\":\"accepted\",\"evidence\":{\"quote\":\"If we switched to ClickHouse, queries would be faster.\",\"spanStart\":0,\"spanEnd\":54}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "hypothetical text cannot be extracted as modality 'decided'"
+    }
+  ],
+  "metrics": [
+    "unsupported_assertion",
+    "negation_modality"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'If we switched … would be faster' is conditional; promoting it to decided/accepted would invent a decision the user never made.",
+  "slice": 3
+}

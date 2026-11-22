@@ -1,0 +1,86 @@
+{
+  "id": "extr-idempotent-reprocessing",
+  "title": "Extraction: reprocessing the same episode adds no duplicate statements",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "should use",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "proposed",
+        "decisionStatus": "proposed"
+      }
+    ],
+    "runs": 2
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "outcomes.0",
+      "op": "eq",
+      "value": "completed"
+    },
+    {
+      "path": "outcomes.1",
+      "op": "eq",
+      "value": "completed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1,
+      "description": "second run must be a no-op"
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.duplicateOnRetryRate",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "idempotent_retry",
+    "extraction_precision",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "Two independent job claims over the same episode must converge on one content-hashed statement: duplicate-on-retry rate is measured, not assumed.",
+  "slice": 3
+}

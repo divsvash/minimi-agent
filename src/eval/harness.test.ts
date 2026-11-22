@@ -9,6 +9,7 @@ import {
 import { runEval, parseArgs } from "./run.js";
 import { sutRegistry } from "./registry.js";
 import { UsageCollector } from "./usage.js";
+import { ScoreCollector } from "./scores.js";
 import { FakeLLMProvider, llmCostUsd } from "../fakes/providers.js";
 
 const repoGolden = join(process.cwd(), "eval", "golden");
@@ -202,8 +203,8 @@ test("a case that invokes no provider records zero cost with no measured calls",
 });
 
 test("sutRegistry handlers reject malformed input with an error, not a crash", async () => {
-  await assert.rejects(sutRegistry["time.dayRange"]!({ date: "not-a-date", tz: "UTC" }, new UsageCollector()));
-  await assert.rejects(sutRegistry["episode.recall"]!({ date: "2026-11-03", tz: "UTC", episodes: [{}] }, new UsageCollector()));
+  await assert.rejects(sutRegistry["time.dayRange"]!({ date: "not-a-date", tz: "UTC" }, new UsageCollector(), new ScoreCollector()));
+  await assert.rejects(sutRegistry["episode.recall"]!({ date: "2026-11-03", tz: "UTC", episodes: [{}] }, new UsageCollector(), new ScoreCollector()));
 });
 
 test("episode.recall handler returns interpreted-as echo with UTC bounds", async () => {
@@ -217,7 +218,7 @@ test("episode.recall handler returns interpreted-as echo with UTC bounds", async
         source: "chat", createdAt: "2026-11-03T10:00:00.000Z",
       },
     ],
-  }, new UsageCollector())) as { interpretedAs: { fromUtc: string; toUtc: string }; episodes: { id: string }[] };
+  }, new UsageCollector(), new ScoreCollector())) as { interpretedAs: { fromUtc: string; toUtc: string }; episodes: { id: string }[] };
   assert.equal(out.interpretedAs.fromUtc, "2026-11-03T00:00:00.000Z");
   assert.equal(out.interpretedAs.toUtc, "2026-11-04T00:00:00.000Z");
   assert.deepEqual(out.episodes.map((e) => e.id), ["e1"]);

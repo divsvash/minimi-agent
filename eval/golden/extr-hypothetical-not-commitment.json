@@ -1,0 +1,83 @@
+{
+  "id": "extr-hypothetical-not-commitment",
+  "title": "Extraction: a hypothetical stays hypothetical, never a commitment",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-hypo",
+      "externalId": "ext-hypo",
+      "sessionId": "sess-1",
+      "seq": 5,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "If we migrated to ClickHouse, queries would be much faster."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"we\"},\"predicate\":\"migrate to\",\"object\":{\"kind\":\"entity\",\"name\":\"ClickHouse\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"hypothetical\",\"category\":\"hypothesis\",\"evidence\":{\"quote\":\"If we migrated to ClickHouse, queries would be much faster.\",\"spanStart\":0,\"spanEnd\":59}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "we",
+        "predicate": "migrate to",
+        "object": "ClickHouse",
+        "polarity": "positive",
+        "modality": "hypothetical"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "hypothetical"
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "neq",
+      "value": "decided"
+    },
+    {
+      "path": "statements.0.predicateQualifier.statementType",
+      "op": "eq",
+      "value": "hypothesis"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "negation_modality",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'If we migrated … would be' is conditional: the validator rejects asserted/decided here, so the stored statement can never read as a commitment.",
+  "slice": 3
+}

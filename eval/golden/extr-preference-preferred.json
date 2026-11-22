@@ -1,0 +1,83 @@
+{
+  "id": "extr-preference-preferred",
+  "title": "Extraction: a stated preference is stored as preferred, not as a decision",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-prefer",
+      "externalId": "ext-prefer",
+      "sessionId": "sess-1",
+      "seq": 7,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "I prefer Postgres over MySQL for anything relational."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"I\"},\"predicate\":\"prefer\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"preferred\",\"category\":\"preference\",\"evidence\":{\"quote\":\"I prefer Postgres over MySQL for anything relational.\",\"spanStart\":0,\"spanEnd\":53}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "I",
+        "predicate": "prefer",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "preferred"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "preferred"
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "neq",
+      "value": "decided"
+    },
+    {
+      "path": "statements.0.predicateQualifier.statementType",
+      "op": "eq",
+      "value": "preference"
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "negation_modality",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'I prefer X' is a preference: modality=preferred with category=preference, never promoted to decided regardless of how firm it sounds.",
+  "slice": 3
+}

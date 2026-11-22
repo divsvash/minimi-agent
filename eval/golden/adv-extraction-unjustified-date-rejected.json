@@ -1,0 +1,49 @@
+{
+  "id": "adv-extraction-unjustified-date-rejected",
+  "title": "Adversarial: a resolved date with no temporal wording is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-date-bad",
+      "externalId": "ext-date-bad",
+      "sessionId": "sess-1",
+      "seq": 16,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We shortlisted Attio on Monday for the sales team."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"shortlisted\",\"object\":{\"kind\":\"entity\",\"name\":\"Attio\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"shortlisted\",\"temporal\":{\"expression\":null,\"validFrom\":\"2026-03-09T00:00:00.000Z\",\"timePrecision\":\"day\",\"validity\":\"open_ended\"},\"evidence\":{\"quote\":\"We shortlisted Attio on Monday for the sales team.\",\"spanStart\":0,\"spanEnd\":50}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "resolved temporal bounds require the original temporal expression"
+    }
+  ],
+  "metrics": [
+    "temporal_correctness",
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "A date may only be stored when the episode states the temporal wording it came from; otherwise the model invented a date.",
+  "slice": 3
+}

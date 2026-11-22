@@ -1,12 +1,10 @@
-import type { Driver, ManagedTransaction, Record } from "neo4j-driver";
+import type { Driver, ManagedTransaction, Record as Neo4jRecord } from "neo4j-driver";
 import { newSession } from "../interfaces/neo4j.js";
-import { ConflictError, NotFoundError, ValidationError } from "../core/errors.js";
+import { ConflictError, NotFoundError } from "../core/errors.js";
 import { ids } from "../core/ids.js";
-import {
-  EntitySchema, EvidenceSchema, StatementSchema,
-  type Entity, type Evidence, type Statement,
-} from "../contracts/schemas.js";
+import type { Statement } from "../contracts/schemas.js";
 import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
+import { validateStatementWrite } from "./validateStatementWrite.js";
 
 const asIso = (v: unknown): string | null => {
   if (v === null || v === undefined) return null;
@@ -21,7 +19,7 @@ const asRequiredIso = (v: unknown): string => {
   return iso;
 };
 
-function toStatement(r: Record): Statement {
+function toStatement(r: Neo4jRecord): Statement {
   const p = r.get("s").properties as Record<string, unknown>;
   let qualifier: Record<string, string> | undefined;
   if (typeof p.predicateQualifierJson === "string" && p.predicateQualifierJson.length > 0) {
@@ -75,60 +73,6 @@ function contentHash(statement: Omit<Statement, "status">): string {
     statement.timePrecision,
     statement.validity,
   ]));
-}
-
-function validateWrite(write: StatementWrite): {
-  statement: Omit<Statement, "status">;
-  evidence: Evidence[];
-  entities: Entity[];
-} {
-  const statementParsed = StatementSchema.safeParse({ ...write.statement, status: "active" });
-  if (!statementParsed.success) {
-    throw new ValidationError("invalid statement write", statementParsed.error.issues);
-  }
-  if (write.evidence.length === 0) {
-    throw new ValidationError("a statement write requires at least one evidence span");
-  }
-
-  const evidence: Evidence[] = [];
-  for (const item of write.evidence) {
-    const parsed = EvidenceSchema.safeParse(item);
-    if (!parsed.success) throw new ValidationError("invalid evidence write", parsed.error.issues);
-    if (parsed.data.kind !== "episode_span" || !parsed.data.episodeId
-      || parsed.data.spanStart === undefined || parsed.data.spanEnd === undefined
-      || parsed.data.spanEnd <= parsed.data.spanStart || !parsed.data.quote?.trim()) {
-      throw new ValidationError("Slice 3 statements require non-empty episode_span evidence");
-    }
-    evidence.push(parsed.data);
-  }
-  const episodeId = evidence[0]!.episodeId!;
-  if (evidence.some((e) => e.episodeId !== episodeId)) {
-    throw new ValidationError("all evidence for one statement must cite the same episode");
-  }
-
-  const entities: Entity[] = [];
-  const seen = new Map<string, Entity>();
-  for (const item of write.entities) {
-    const parsed = EntitySchema.safeParse(item);
-    if (!parsed.success) throw new ValidationError("invalid entity write", parsed.error.issues);
-    const prior = seen.get(parsed.data.id);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(parsed.data)) {
-      throw new ConflictError(`entity ${parsed.data.id} has conflicting content in one write`);
-    }
-    if (!prior) {
-      seen.set(parsed.data.id, parsed.data);
-      entities.push(parsed.data);
-    }
-  }
-  if (!seen.has(write.statement.subjectId)) {
-    throw new ValidationError("statement write is missing its subject entity");
-  }
-  if (write.statement.objectKind === "entity" && (!write.statement.objectId || !seen.has(write.statement.objectId))) {
-    throw new ValidationError("entity object write is missing its object entity");
-  }
-
-  const statement = statementParsed.data;
-  return { statement, evidence, entities };
 }
 
 export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
@@ -201,7 +145,7 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
   }
 
   async insert(tx: ManagedTransaction, write: StatementWrite): Promise<Statement> {
-    const { statement, evidence, entities } = validateWrite(write);
+    const { statement, evidence, entities } = validateStatementWrite(write);
     const episodeId = evidence[0]!.episodeId!;
 
     const episode = await tx.run("MATCH (ep:Episode {id: $episodeId}) RETURN ep.id AS id", { episodeId });

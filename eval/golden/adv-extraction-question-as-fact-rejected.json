@@ -1,0 +1,49 @@
+{
+  "id": "adv-extraction-question-as-fact-rejected",
+  "title": "Adversarial: extracting a question as an asserted fact is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-q-assert",
+      "externalId": "ext-q-assert",
+      "sessionId": "sess-1",
+      "seq": 11,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "Should we use Redis or Postgres for caching?"
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"we\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"Redis\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"evidence\":{\"quote\":\"Should we use Redis or Postgres for caching?\",\"spanStart\":0,\"spanEnd\":44}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "question text cannot be extracted as modality 'asserted'"
+    }
+  ],
+  "metrics": [
+    "unsupported_assertion",
+    "negation_modality"
+  ],
+  "noChangeTrap": false,
+  "rationale": "A question rendered as an asserted fact would fabricate a commitment; the guard rejects it and the whole episode fails rather than committing a wrong statement.",
+  "slice": 3
+}

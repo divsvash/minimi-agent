@@ -5,6 +5,15 @@ export const GoldenMetricSchema = z.enum([
   "temporal_correctness",
   "citation_coverage",
   "false_unchanged",
+  // Slice 3 extraction coverage tags. The measured values live in
+  // EvalReport.extraction (per-case scores aggregated as means); these tags
+  // record which property a case is responsible for.
+  "extraction_precision",
+  "extraction_recall",
+  "span_validity",
+  "negation_modality",
+  "unsupported_assertion",
+  "idempotent_retry",
 ]);
 export type GoldenMetric = z.infer<typeof GoldenMetricSchema>;
 

@@ -1,0 +1,80 @@
+{
+  "id": "extr-provider-timeout-then-retry",
+  "title": "Extraction: a retryable provider timeout is retried and then succeeds",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "should use",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "proposed",
+        "decisionStatus": "proposed"
+      }
+    ],
+    "providerFailures": {
+      "timeout": 1,
+      "unavailable": 0,
+      "error": 0
+    },
+    "maxProviderAttempts": 2
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.providerCalls",
+      "op": "eq",
+      "value": 2,
+      "description": "one timeout + one success"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.provenanceValidity",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "span_validity"
+  ],
+  "noChangeTrap": false,
+  "rationale": "ProviderTimeoutError is retryable: the service must retry within the same job attempt and still persist exactly one provenance-backed statement.",
+  "slice": 3
+}

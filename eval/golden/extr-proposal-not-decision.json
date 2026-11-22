@@ -1,0 +1,118 @@
+{
+  "id": "extr-proposal-not-decision",
+  "title": "Extraction: a suggestion is stored as a proposal, never as a decision",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "should use",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "proposed",
+        "decisionStatus": "proposed"
+      }
+    ]
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "provider",
+      "op": "eq",
+      "value": "fake-llm-1",
+      "description": "provider must be labelled, never implied real"
+    },
+    {
+      "path": "semanticQuality",
+      "op": "eq",
+      "value": "not_measured",
+      "description": "mocked provider cannot certify meaning"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "eq",
+      "value": "proposed"
+    },
+    {
+      "path": "statements.0.modality",
+      "op": "neq",
+      "value": "decided",
+      "description": "'should' must not become a decision"
+    },
+    {
+      "path": "statements.0.predicateQualifier.decisionStatus",
+      "op": "eq",
+      "value": "proposed"
+    },
+    {
+      "path": "statements.0.predicateQualifier.extractionStatus",
+      "op": "eq",
+      "value": "accepted"
+    },
+    {
+      "path": "statements.0.predicateQualifier.extractionSchema",
+      "op": "eq",
+      "value": "candidate/1"
+    },
+    {
+      "path": "statements.0.evidence.0.exact",
+      "op": "eq",
+      "value": true
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.provenanceValidity",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.negationModalityPreservation",
+      "op": "eq",
+      "value": 1
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "extraction_recall",
+    "span_validity",
+    "negation_modality"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'should use Postgres' must persist as modality=proposed with decisionStatus=proposed, carrying exact-span evidence and accepted-extraction provenance. Never upgraded to decided.",
+  "slice": 3
+}

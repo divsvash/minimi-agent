@@ -25,6 +25,8 @@ export interface RejectedCandidate {
 
 export interface MappedCandidates {
   accepted: StatementWrite[];
+  /** The source candidates that produced `accepted`, index-aligned with it. */
+  acceptedCandidates: CandidateStatement[];
   rejected: RejectedCandidate[];
   /** Exact duplicate candidates collapsed within one model result. */
   duplicateCandidates: number;
@@ -48,7 +50,7 @@ function sentenceAround(text: string, start: number, end: number): string {
   return text.slice(from, to);
 }
 
-function normalizePredicate(raw: string): string {
+export function normalizePredicate(raw: string): string {
   return raw
     .trim()
     .toLocaleLowerCase()
@@ -59,8 +61,65 @@ function normalizePredicate(raw: string): string {
     .slice(0, 64);
 }
 
-function normalizeMention(raw: string): string {
+export function normalizeMention(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Deterministic key order. A model that reorders `scope` keys between retries must
+ * not mint a different statement id for the same content — that would silently turn
+ * an idempotent re-run into duplicate statements.
+ */
+function sortedRecord(record: Record<string, string> | undefined): Record<string, string> | null {
+  if (!record) return null;
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+/** Calendar date (YYYY-MM-DD) of `instant` as observed in `timeZone`. */
+function localDateStr(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(instant);
+}
+
+function addLocalDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+function weekdayIndex(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/**
+ * Resolve a relative temporal expression to a local calendar date using ONLY the
+ * episode's own timestamp and timezone — never world knowledge. Returns null when
+ * the expression carries no anchor we resolve here (absolute dates are not parsed
+ * by Slice 3; they are accepted only as an unresolved `expression`).
+ *
+ * Rules, all evaluated against the episode's LOCAL date:
+ *   yesterday/today/tomorrow  -> shifted local date
+ *   "last <weekday>"          -> nearest occurrence strictly in the past
+ *   "next <weekday>"          -> nearest occurrence strictly in the future
+ *   bare "<weekday>"          -> most recent occurrence on or before that date
+ */
+function expectedRelativeDate(expression: string, episode: Episode): string | null {
+  const expr = normalizeSpace(expression);
+  const local = localDateStr(new Date(episode.occurredAt), episode.tz);
+  if (/\byesterday\b/.test(expr)) return addLocalDays(local, -1);
+  if (/\btomorrow\b/.test(expr)) return addLocalDays(local, 1);
+  if (/\btoday\b/.test(expr)) return local;
+
+  const match = /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/.exec(expr);
+  if (!match) return null;
+  const target = WEEKDAYS.indexOf(match[1] as (typeof WEEKDAYS)[number]);
+  const delta = (target - weekdayIndex(local) + 7) % 7;
+  if (/\blast\b/.test(expr)) return addLocalDays(local, delta === 0 ? -7 : delta - 7);
+  if (/\bnext\b/.test(expr)) return addLocalDays(local, delta === 0 ? 7 : delta + 7);
+  return addLocalDays(local, delta === 0 ? 0 : delta - 7);
 }
 
 function entityFor(episode: Episode, name: string, type: Entity["type"], recordedAt: string): Entity {
@@ -89,38 +148,61 @@ function decisionModalityError(decisionStatus: NonNullable<CandidateStatement["d
     : `decisionStatus '${decisionStatus}' is incoherent with modality '${modality}'`;
 }
 
-function validateTemporal(candidate: CandidateStatement, episodeText: string): string[] {
+function validateTemporal(candidate: CandidateStatement, episode: Episode): string[] {
   const errors: string[] = [];
   const t = candidate.temporal;
   if (!t) return errors;
 
-  if (t.expression && !contains(episodeText, t.expression)) {
+  const hasFrom = t.validFrom !== undefined && t.validFrom !== null;
+  const hasTo = t.validTo !== undefined && t.validTo !== null;
+
+  if (t.expression && !contains(episode.text, t.expression)) {
     errors.push(`temporal expression '${t.expression}' does not appear in the source episode`);
   }
-  if ((t.validFrom !== undefined && t.validFrom !== null) || (t.validTo !== undefined && t.validTo !== null)) {
-    if (!t.expression) {
-      errors.push("resolved temporal bounds require the original temporal expression");
-    }
+  if ((hasFrom || hasTo) && !t.expression) {
+    errors.push("resolved temporal bounds require the original temporal expression");
   }
-  if ((t.validFrom === undefined || t.validFrom === null) && t.validTo !== undefined && t.validTo !== null) {
+  // A resolved instant with `unknown` precision is incoherent: either the date is
+  // known well enough to store, or it must stay null.
+  if ((hasFrom || hasTo) && (!t.timePrecision || t.timePrecision === "unknown")) {
+    errors.push("resolved temporal bounds require a declared time precision");
+  }
+  if (!hasFrom && hasTo) {
     errors.push("validTo cannot be resolved without validFrom");
   }
-  if (t.validFrom && t.validTo && t.validTo < t.validFrom) {
+  if (hasFrom && hasTo && t.validTo! < t.validFrom!) {
     errors.push("validTo precedes validFrom");
   }
-  if (t.validity === "bounded" && (!t.validFrom || !t.validTo)) {
+  if (t.validity === "bounded" && (!hasFrom || !hasTo)) {
     errors.push("validity 'bounded' requires both validFrom and validTo");
   }
-  if (t.validity === "ongoing" && !t.validFrom) {
+  if (t.validity === "ongoing" && !hasFrom) {
     errors.push("validity 'ongoing' requires validFrom");
   }
-  if (t.validity === "open_ended" && t.validTo) {
+  if (t.validity === "open_ended" && hasTo) {
     errors.push("validity 'open_ended' cannot have validTo");
+  }
+
+  if (t.expression && hasFrom) {
+    const expected = expectedRelativeDate(t.expression, episode);
+    if (expected) {
+      const actual = localDateStr(new Date(t.validFrom!), episode.tz);
+      if (actual !== expected) {
+        errors.push(
+          `temporal expression '${t.expression}' resolves to ${expected} in ${episode.tz} for this episode, not ${actual}`,
+        );
+      }
+    }
   }
   return errors;
 }
 
-function identityTuple(candidate: CandidateStatement, predicate: string): unknown[] {
+function identityTuple(
+  candidate: CandidateStatement,
+  predicate: string,
+  scope: Record<string, string> | null,
+  qualifications: readonly string[] | undefined,
+): unknown[] {
   return [
     normalizeMention(candidate.subject.name).toLocaleLowerCase(),
     candidate.subject.type ?? "concept",
@@ -138,8 +220,8 @@ function identityTuple(candidate: CandidateStatement, predicate: string): unknow
     candidate.temporal?.validTo ?? null,
     candidate.temporal?.timePrecision ?? null,
     candidate.temporal?.validity ?? null,
-    candidate.scope ?? null,
-    candidate.qualifications ?? null,
+    scope,
+    qualifications ?? null,
     candidate.evidence.spanStart,
     candidate.evidence.spanEnd,
   ];
@@ -160,6 +242,7 @@ export function validateCandidates(args: {
 }): MappedCandidates {
   const { episode, candidates, extractionModel, extractionPromptHash, extractionVersion, recordedAt } = args;
   const accepted: StatementWrite[] = [];
+  const acceptedCandidates: CandidateStatement[] = [];
   const rejected: RejectedCandidate[] = [];
   const seen = new Set<string>();
   let duplicateCandidates = 0;
@@ -168,6 +251,9 @@ export function validateCandidates(args: {
     const errors: string[] = [];
     const text = episode.text;
     const { spanStart, spanEnd, quote } = candidate.evidence;
+    // Normalized once so the identity hash and the stored qualifier agree.
+    const scope = sortedRecord(candidate.scope);
+    const qualifications = candidate.qualifications ? [...candidate.qualifications].sort() : undefined;
 
     if (!Number.isInteger(spanStart) || !Number.isInteger(spanEnd) || spanStart < 0 || spanEnd <= spanStart) {
       errors.push("invalid source span bounds");
@@ -202,17 +288,25 @@ export function validateCandidates(args: {
       errors.push("negative polarity is not supported by a negation cue in the cited sentence");
     }
 
-    const isQuestion = /[?]\s*$/.test(sentence.trim()) || /^\s*(?:who|what|when|where|why|how|should|can|could|would|do|does|did|is|are|was|were)\b/i.test(sentence.trim());
+    const trimmed = sentence.trim();
+    // A leading auxiliary only signals a question when the sentence really is
+    // interrogative: "Do use MongoDB" is an imperative, not a question.
+    const isQuestion = /\?\s*$/.test(trimmed)
+      || /^\s*(?:who|what|when|where|why|how|should|can|could|would|is|are|was|were)\b/i.test(trimmed);
     const isQuestionMeta = candidate.predicate.toLocaleLowerCase().trim() === "asked_about";
     if (isQuestion && !isQuestionMeta && ["asserted", "decided", "proposed", "preferred"].includes(candidate.modality)) {
       errors.push(`question text cannot be extracted as modality '${candidate.modality}'`);
     }
 
-    if (HYPOTHETICAL.test(sentence) && ["asserted", "decided", "proposed", "preferred"].includes(candidate.modality)) {
+    // A hypothetical is never a commitment. Non-committal modalities
+    // (proposed/preferred/uncertain/hypothetical/questioned/…) may survive it.
+    if (HYPOTHETICAL.test(sentence) && ["asserted", "decided"].includes(candidate.modality)) {
       errors.push(`hypothetical text cannot be extracted as modality '${candidate.modality}'`);
     }
 
-    if (["decided", "accepted"].includes(candidate.modality) && TENTATIVE.test(sentence)) {
+    // Hedged wording ("think", "should", "maybe", "suggest", "undecided") is never
+    // a plain fact and never an accepted decision.
+    if (["asserted", "decided", "accepted"].includes(candidate.modality) && TENTATIVE.test(sentence)) {
       errors.push(`tentative text cannot be extracted as modality '${candidate.modality}'`);
     }
 
@@ -221,13 +315,13 @@ export function validateCandidates(args: {
       if (err) errors.push(err);
     }
 
-    errors.push(...validateTemporal(candidate, text));
+    errors.push(...validateTemporal(candidate, episode));
 
-    for (const q of candidate.qualifications ?? []) {
+    for (const q of qualifications ?? []) {
       if (!contains(text, q)) errors.push(`qualification '${q}' does not appear in the source episode`);
     }
 
-    for (const key of Object.keys(candidate.scope ?? {})) {
+    for (const key of Object.keys(scope ?? {})) {
       if (RESERVED_QUALIFIER_KEYS.has(key)) errors.push(`scope key '${key}' is reserved`);
     }
 
@@ -239,7 +333,7 @@ export function validateCandidates(args: {
       return;
     }
 
-    const identity = JSON.stringify(identityTuple(candidate, predicate));
+    const identity = JSON.stringify(identityTuple(candidate, predicate, scope, qualifications));
     const statementId = "stmt:" + ids.sha256([extractionVersion, episode.id, identity].join("|"));
     if (seen.has(statementId)) {
       duplicateCandidates += 1;
@@ -269,11 +363,11 @@ export function validateCandidates(args: {
     if (candidate.category) qualifier.statementType = candidate.category;
     if (candidate.decisionStatus) qualifier.decisionStatus = candidate.decisionStatus;
     if (candidate.temporal?.expression) qualifier.temporalExpression = candidate.temporal.expression;
-    if (candidate.qualifications?.length) qualifier.qualifications = JSON.stringify(candidate.qualifications);
+    if (qualifications?.length) qualifier.qualifications = JSON.stringify(qualifications);
     if (normalizePredicate(candidate.predicate) !== candidate.predicate.trim().toLocaleLowerCase()) {
       qualifier.predicateText = candidate.predicate.trim();
     }
-    for (const [key, value] of Object.entries(candidate.scope ?? {})) qualifier[key] = value;
+    for (const [key, value] of Object.entries(scope ?? {})) qualifier[key] = value;
     qualifier.extractionStatus = "accepted";
     qualifier.extractionSchema = EXTRACTION_SCHEMA_VERSION;
 
@@ -310,7 +404,8 @@ export function validateCandidates(args: {
 
     const entities = objectEntity && objectEntity.id !== subject.id ? [subject, objectEntity] : [subject];
     accepted.push({ statement, evidence: [evidence], entities });
+    acceptedCandidates.push(candidate);
   });
 
-  return { accepted, rejected, duplicateCandidates };
+  return { accepted, acceptedCandidates, rejected, duplicateCandidates };
 }

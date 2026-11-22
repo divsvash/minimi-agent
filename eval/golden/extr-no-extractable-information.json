@@ -1,0 +1,80 @@
+{
+  "id": "extr-no-extractable-information",
+  "title": "Extraction: filler yields zero statements without inventing anything",
+  "kind": "scenario",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-empty",
+      "externalId": "ext-empty",
+      "sessionId": "sess-1",
+      "seq": 10,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "Thanks, that helps!"
+    },
+    "responses": [
+      "{\"candidates\":[]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "ok"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.entities",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.accepted",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "statements",
+      "op": "length",
+      "value": 0
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.recall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "scores.provenanceValidity",
+      "op": "eq",
+      "value": null,
+      "description": "no persisted statement means no provenance was claimed"
+    }
+  ],
+  "metrics": [
+    "extraction_precision",
+    "extraction_recall"
+  ],
+  "noChangeTrap": false,
+  "rationale": "'Thanks, that helps!' carries no extractable information: the correct output is an empty statement set, not a forced candidate.",
+  "slice": 3
+}

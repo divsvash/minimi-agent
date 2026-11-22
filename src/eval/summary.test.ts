@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { computeMetrics, type CaseResult } from "./metrics.js";
 import { formatReport } from "./run.js";
-import { summarizeCost, summarizeScenarios } from "./summary.js";
+import { summarizeCost, summarizeExtractionScores, summarizeScenarios } from "./summary.js";
 
 const base = (over: Partial<CaseResult>): CaseResult => ({
   id: over.id ?? "case",
@@ -81,6 +81,7 @@ test("formatted report makes incomplete challenge coverage and unmeasured cost e
     metrics,
     challenge: summarizeScenarios(results),
     cost: summarizeCost(results),
+    extraction: summarizeExtractionScores(results),
     failures: metrics.failed,
   });
 
@@ -112,10 +113,87 @@ test("formatted report labels cost as measured only when a provider call was rec
     metrics,
     challenge: summarizeScenarios(results),
     cost: summarizeCost(results),
+    extraction: summarizeExtractionScores(results),
     failures: metrics.failed,
   });
 
   assert.ok(out.includes(
     "provider cost USD:             0.020000 (measured from 1 provider call(s) across 1 executed case(s))",
   ));
+});
+
+test("extraction summary aggregates only the scores that were actually recorded", () => {
+  const full = base({
+    id: "e1", status: "pass", slice: 3,
+    scores: [
+      { name: "extraction_precision", value: 1 },
+      { name: "extraction_recall", value: 1 },
+      { name: "provenance_validity", value: 1 },
+      { name: "negation_modality_preservation", value: 1 },
+    ],
+    costBreakdown: [{ source: "llm:fake-llm-1", usd: 0.001 }],
+  });
+  const partial = base({
+    id: "e2", status: "pass", slice: 3,
+    scores: [{ name: "extraction_precision", value: 0.5 }],
+    costBreakdown: [{ source: "llm:fake-llm-1", usd: 0.001 }],
+  });
+  const failed = base({ id: "e3", status: "fail", slice: 3 });
+  const pending = base({
+    id: "e4", status: "pending", slice: 3,
+    scores: [{ name: "extraction_precision", value: 0 }],
+  });
+
+  const s = summarizeExtractionScores([full, partial, failed, pending]);
+  assert.equal(s.executedCases, 2, "failed and pending cases contribute no scores");
+  assert.equal(s.providerBasis, "mocked");
+  assert.equal(s.semanticQuality, "not_measured");
+  assert.deepEqual(s.scores.precision, { mean: 0.75, cases: 2 });
+  assert.deepEqual(s.scores.recall, { mean: 1, cases: 1 }, "a metric nobody recorded is not averaged in");
+  assert.deepEqual(s.scores.duplicateOnRetryRate, { mean: null, cases: 0 }, "unrecorded means null, never 0");
+  assert.deepEqual(s.scores.unsupportedAssertionRate, { mean: null, cases: 0 });
+});
+
+test("extraction summary never claims a provider basis it did not observe", () => {
+  const unobserved = summarizeExtractionScores([base({ id: "x", status: "pass" })]);
+  assert.equal(unobserved.providerBasis, "unmeasured");
+  assert.equal(unobserved.executedCases, 0);
+  assert.equal(unobserved.semanticQuality, "not_measured");
+
+  const realProvider = summarizeExtractionScores([
+    base({
+      id: "y", status: "pass",
+      scores: [{ name: "extraction_precision", value: 1 }],
+      costBreakdown: [{ source: "llm:gpt-4o", usd: 0.01 }],
+    }),
+  ]);
+  assert.equal(realProvider.providerBasis, "other", "a non-fake provider must not be labelled mocked");
+});
+
+test("formatted report states extraction scores, provider basis, and semantic quality", () => {
+  const results = [
+    base({
+      id: "e1", status: "pass", slice: 3,
+      scores: [
+        { name: "extraction_precision", value: 1 },
+        { name: "extraction_recall", value: 1 },
+      ],
+      costBreakdown: [{ source: "llm:fake-llm-1", usd: 0.001 }],
+    }),
+    base({ id: "none", status: "pass", slice: 3 }),
+  ];
+  const metrics = computeMetrics(results);
+  const out = formatReport({
+    results,
+    metrics,
+    challenge: summarizeScenarios(results),
+    cost: summarizeCost(results),
+    extraction: summarizeExtractionScores(results),
+    failures: metrics.failed,
+  });
+
+  assert.ok(out.includes("provider basis MOCKED"));
+  assert.ok(out.includes("semantic quality NOT MEASURED"));
+  assert.ok(out.includes("extraction precision:          100.0% (n=1)"));
+  assert.ok(out.includes("duplicate-on-retry rate:       n/a (no case recorded it)"));
 });

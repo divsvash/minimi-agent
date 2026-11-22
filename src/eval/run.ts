@@ -75,6 +75,21 @@ export function formatReport(report: EvalReport): string {
       ? `provider cost USD:             ${report.cost.totalUsd.toFixed(6)} (measured from ${report.cost.providerCalls} provider call(s) across ${report.cost.casesWithProviderCalls} executed case(s))`
       : "provider cost:                 NOT MEASURED — 0 provider calls recorded; zero is not a measured provider cost",
   );
+
+  const ex = report.extraction;
+  const score = (s: { mean: number | null; cases: number }) =>
+    s.mean === null ? "n/a (no case recorded it)" : `${(s.mean * 100).toFixed(1)}% (n=${s.cases})`;
+  lines.push("");
+  lines.push(
+    `extraction runs:                ${ex.executedCases} scored case(s); provider basis ${ex.providerBasis.toUpperCase()}; ` +
+    `semantic quality ${ex.semanticQuality.replace("_", " ").toUpperCase()}`,
+  );
+  lines.push(`  extraction precision:          ${score(ex.scores.precision)}`);
+  lines.push(`  extraction recall:             ${score(ex.scores.recall)}`);
+  lines.push(`  provenance validity:           ${score(ex.scores.provenance)}`);
+  lines.push(`  negation/modality preserved:   ${score(ex.scores.negationModality)}`);
+  lines.push(`  unsupported assertion rate:    ${score(ex.scores.unsupportedAssertionRate)}`);
+  lines.push(`  duplicate-on-retry rate:       ${score(ex.scores.duplicateOnRetryRate)}`);
   lines.push("");
   lines.push("challenge scenarios (A/B/C):");
   for (const s of challenge.scenarios) {

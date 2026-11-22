@@ -1,0 +1,79 @@
+{
+  "id": "adv-extraction-stale-fence-persists-nothing",
+  "title": "Adversarial: output prepared under a lost fence is never persisted",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-postgres",
+      "externalId": "ext-postgres",
+      "sessionId": "sess-1",
+      "seq": 1,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We should use Postgres for the new service."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"should use\",\"object\":{\"kind\":\"entity\",\"name\":\"Postgres\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"proposed\",\"decisionStatus\":\"proposed\",\"category\":\"recommendation\",\"evidence\":{\"quote\":\"We should use Postgres for the new service.\",\"spanStart\":0,\"spanEnd\":43}}]}"
+    ],
+    "labels": [
+      {
+        "subject": "We",
+        "predicate": "should use",
+        "object": "Postgres",
+        "polarity": "positive",
+        "modality": "proposed",
+        "decisionStatus": "proposed"
+      }
+    ],
+    "staleFence": true
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "fenced_out"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0,
+      "description": "stale output must not commit"
+    },
+    {
+      "path": "counts.evidence",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "counts.entities",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "eq",
+      "value": null,
+      "description": "a lost fence is not a job failure"
+    },
+    {
+      "path": "statements",
+      "op": "length",
+      "value": 0
+    },
+    {
+      "path": "scores.precision",
+      "op": "eq",
+      "value": null,
+      "description": "nothing completed, so nothing is scored"
+    }
+  ],
+  "metrics": [],
+  "noChangeTrap": false,
+  "rationale": "The handler prepares candidates outside the transaction; when commitFencedOutput loses the fence the prepared writes are discarded wholesale — zero statements, zero evidence.",
+  "slice": 3
+}

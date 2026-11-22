@@ -1,0 +1,49 @@
+{
+  "id": "adv-extraction-negative-without-cue-rejected",
+  "title": "Adversarial: negative polarity without a negation cue is rejected",
+  "kind": "adversarial",
+  "sut": "extraction.episode",
+  "input": {
+    "episode": {
+      "id": "ep-neg-bad",
+      "externalId": "ext-neg-bad",
+      "sessionId": "sess-1",
+      "seq": 13,
+      "role": "user",
+      "occurredAt": "2026-11-16T09:00:00.000Z",
+      "precision": "second",
+      "tz": "Europe/Lisbon",
+      "source": "chat",
+      "createdAt": "2026-11-16T09:00:00.000Z",
+      "text": "We decided to go with Attio for the CRM."
+    },
+    "responses": [
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"go with\",\"object\":{\"kind\":\"entity\",\"name\":\"Attio\",\"type\":\"product\"},\"polarity\":\"negative\",\"modality\":\"asserted\",\"evidence\":{\"quote\":\"We decided to go with Attio for the CRM.\",\"spanStart\":0,\"spanEnd\":40}}]}"
+    ],
+    "labels": []
+  },
+  "expect": [
+    {
+      "path": "status",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "counts.statements",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "error",
+      "op": "includes",
+      "value": "negation cue"
+    }
+  ],
+  "metrics": [
+    "negation_modality",
+    "unsupported_assertion"
+  ],
+  "noChangeTrap": false,
+  "rationale": "A positive sentence cannot be stored with polarity=negative; polarity must be evidenced by the cited sentence, not asserted by the model.",
+  "slice": 3
+}

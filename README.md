@@ -3,11 +3,13 @@
 Minimi is a conversational agent built around persistent memory rather than disposable chat history. Its first implementation provides atomic episode ingestion, timezone-aware recall, full-text search and a fenced background job ledger. 
 Start here: **[DESIGN.md](DESIGN.md)** (one page) · full reference: **[docs/architecture.md](docs/architecture.md)** · decisions: **[docs/decisions/](docs/decisions/)**
 
-## Status: Slice 2 shipped (contracts, fakes & eval harness); Slices 3—11 planned
+## Status: Slices 1—2 shipped; Slice 3 implemented and offline-verified (integration run pending); Slices 4—11 planned
 
-Working & tested: Episode persistence (verbatim, atomic with outbox job), idempotent ingest (upstream `messageId` preferred; content-addressed fallback), per-session sequence guard with `(sessionId, seq)` uniqueness, day-scoped tz-aware verbatim recall with "interpreted as" echo, synchronous full-text search, and the Neo4j job ledger — fenced claiming, fenced output commits, provisional outputs, sweeper, replay reconciler.
+Working & tested: Episode persistence (verbatim, atomic with outbox job), idempotent ingest (upstream `messageId` preferred; content-addressed fallback), per-session sequence guard with `(sessionId, seq)` uniqueness, day-scoped tz-aware verbatim recall with "interpreted as" echo, synchronous full-text search, the Neo4j job ledger — fenced claiming, fenced output commits, provisional outputs, sweeper, replay reconciler — and, offline, the Slice 3 extraction pipeline (episode → provider → schema-validated candidates → exact-span `Evidence` + `Statement` + mention-scoped `Entity`, committed only inside the job fence).
 
-Not yet (see architecture.md §11): extraction (3) · entity resolution (4) · temporal corrections (5) · hybrid retrieval/synthesis (6) · research subsystem (7) · reasoning flows (8).
+Slice 3 verification is **offline only**: `npx tsc --noEmit`, `npm run test:unit`, `npm run eval`. The eval's 22 extraction cases run against a **fake provider** and are labelled `provider basis MOCKED · semantic quality NOT MEASURED` — they prove span fidelity, guard behaviour, idempotency and fencing, not that a real model extracts well. `test/integration/extraction.test.ts` is written and type-checked but **has not been run** (needs Docker; `npm run test:integration`). Still open from the Slice 3 design: embedding worker, predicate whitelist, UI failure banner, and any real-provider evaluation.
+
+Not yet (see architecture.md §11): entity resolution (4) · temporal corrections (5) · hybrid retrieval/synthesis (6) · research subsystem (7) · reasoning flows (8).
 
 ## Prerequisites
 - Node ≥ 20 · Docker with compose (image pinned: `neo4j:5.26.0-community` + APOC)
@@ -28,10 +30,12 @@ npm run dev          # runs migrations, serves on :3000, starts the sweeper
 
 ## Tests
 ```bash
-npm run test:unit          # offline (tz math, id hashing)
+npm run test:unit          # offline (tz math, id hashing, extraction guards, job fencing)
 npm run test:integration   # boots pinned Neo4j; suite is serialized cross-process (Community edition = one DB)
 npm run eval              # offline eval harness: golden cases, drift check, exits non-zero on failure
+npm run eval:bless         # re-lock eval/fixtures.lock.json after adding/changing golden cases
 ```
+`npm run eval` runs the extraction cases on a fake provider; the report prints `provider basis MOCKED · semantic quality NOT MEASURED` and never presents those numbers as model quality.
 The claim race is a hard gate: 8 racing workers × 24 jobs → exactly-once claim; stale-generation completion, stale output writes, and provisional promotion/reaping are all covered; concurrent-ingest `(sessionId, seq)` uniqueness is covered.
 
 ## Configuration
