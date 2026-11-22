@@ -2,6 +2,7 @@ import { ConflictError } from "../core/errors.js";
 import type { Entity, Evidence, Statement } from "../contracts/schemas.js";
 import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
 import { validateStatementWrite } from "../memory/validateStatementWrite.js";
+import { immutableEntityContent, immutableStatementContent } from "../memory/statementContent.js";
 import { isMemoryTransaction, type Snapshottable } from "./memoryTransaction.js";
 
 interface StoreState {
@@ -98,22 +99,32 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
 
     const existing = state.statements.get(incoming.id);
     if (existing) {
-      if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
+      // Same rule as Neo4j's `WHERE s.contentHash = $hash`: recordedAt and the
+      // status projection are first-write/mutable metadata, not immutable content.
+      if (JSON.stringify(immutableStatementContent(existing)) !== JSON.stringify(immutableStatementContent(incoming))) {
         throw new ConflictError(`statement ${incoming.id} already exists with different immutable content`);
       }
       return structuredClone(existing);
     }
     for (const e of entities) {
       const prior = state.entities.get(e.id);
-      if (prior && JSON.stringify(prior) !== JSON.stringify(e)) {
-        throw new ConflictError(`entity ${e.id} already exists with different content`);
+      if (prior) {
+        // createdAt/updatedAt are first-write metadata, like Neo4j's
+        // MERGE ... ON CREATE SET; a matching retry keeps the original values.
+        if (JSON.stringify(immutableEntityContent(prior)) !== JSON.stringify(immutableEntityContent(e))) {
+          throw new ConflictError(`entity ${e.id} already exists with different content`);
+        }
+        continue;
       }
       state.entities.set(e.id, structuredClone(e));
     }
     for (const e of evidence) {
       const prior = state.evidence.get(e.id);
-      if (prior && JSON.stringify(prior) !== JSON.stringify(e)) {
-        throw new ConflictError(`evidence ${e.id} already exists with different content`);
+      if (prior) {
+        if (JSON.stringify(prior) !== JSON.stringify(e)) {
+          throw new ConflictError(`evidence ${e.id} already exists with different content`);
+        }
+        continue;
       }
       state.evidence.set(e.id, structuredClone(e));
     }

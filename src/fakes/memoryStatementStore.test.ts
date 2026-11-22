@@ -1,8 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ConflictError, ValidationError } from "../core/errors.js";
-import type { Entity, Evidence, Statement } from "../contracts/schemas.js";
+import type { Entity, Episode, Evidence, Statement } from "../contracts/schemas.js";
 import type { StatementWrite } from "../contracts/ports.js";
+import { fixedClock } from "../core/clock.js";
+import { ExtractionService } from "../extraction/extractEpisode.js";
+import { FakeLLMProvider } from "./providers.js";
 import { InMemoryStatementStore } from "./memoryStatementStore.js";
 import { InMemoryJobLedger } from "./memoryJobLedger.js";
 
@@ -226,4 +229,78 @@ test("a failed second write rolls back the first: zero statements, evidence and 
   assert.equal(store.size, 0);
   assert.deepEqual(store.evidenceFor("stmt:1"), []);
   assert.deepEqual(store.entitiesFor("stmt:1"), []);
+});
+
+test("re-extracting one episode under a different clock is idempotent offline", async () => {
+  const text = "We should use Postgres for the new service.";
+  const ep: Episode = {
+    id: "ep-clock", externalId: "ext-clock", sessionId: "sess-clock", seq: 0,
+    role: "user", text, occurredAt: "2026-11-16T09:00:00.000Z",
+    precision: "second", tz: "UTC", source: "chat", createdAt: "2026-11-16T09:00:00.000Z",
+  };
+  const candidate = {
+    subject: { name: "We" },
+    predicate: "should use",
+    object: { kind: "entity", name: "Postgres", type: "product" },
+    polarity: "positive",
+    modality: "proposed",
+    decisionStatus: "proposed",
+    confidence: 0.8,
+    evidence: { quote: text, spanStart: 0, spanEnd: text.length },
+  };
+  const provider = new FakeLLMProvider(() => ({
+    text: JSON.stringify({ candidates: [candidate] }),
+    model: "fake-llm-1",
+    usage: { inputTokens: 10, outputTokens: 5 },
+    finishReason: "stop",
+  }));
+  const extractAt = (iso: string) => new ExtractionService({
+    provider, clock: fixedClock(new Date(iso)), timeoutMs: 0,
+  }).extractEpisode(ep);
+
+  const first = await extractAt("2026-11-19T00:00:00.000Z");
+  const second = await extractAt("2026-11-20T00:00:00.000Z");
+  assert.equal(first.accepted.length, 1);
+  assert.notEqual(
+    first.accepted[0]!.statement.recordedAt,
+    second.accepted[0]!.statement.recordedAt,
+    "the two extractions really carry different clock values",
+  );
+  assert.equal(first.accepted[0]!.statement.id, second.accepted[0]!.statement.id);
+
+  const store = new InMemoryStatementStore();
+  for (const w of first.accepted) await store.insert({}, w);
+  for (const w of second.accepted) await store.insert({}, w);
+
+  assert.equal(store.allStatements().length, 1, "no duplicate statement");
+  assert.equal(store.allEvidence().length, 1, "no duplicate evidence");
+  assert.equal(store.allEntities().length, 2, "no duplicate entities");
+  assert.equal(
+    store.allStatements()[0]!.recordedAt,
+    first.accepted[0]!.statement.recordedAt,
+    "first-write recordedAt is preserved on the retry",
+  );
+});
+
+test("a genuine immutable-content change still conflicts across different clocks", async () => {
+  const store = new InMemoryStatementStore();
+  await store.insert({}, write({ statement: statement({ recordedAt: "2026-11-19T00:00:00.000Z" }) }));
+
+  await assert.rejects(
+    () => store.insert({}, write({
+      statement: statement({
+        predicate: "must_not_use",
+        recordedAt: "2026-11-20T00:00:00.000Z",
+      }),
+    })),
+    (err: unknown) => err instanceof ConflictError && err.message.includes("different immutable content"),
+    "a changed immutable field must conflict even though recordedAt also differs",
+  );
+
+  assert.equal(store.allStatements().length, 1);
+  assert.equal(
+    store.allStatements()[0]!.recordedAt,
+    "2026-11-19T00:00:00.000Z",
+    "the rejected write must not replace first-write metadata",
+  );
 });

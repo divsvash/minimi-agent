@@ -5,6 +5,7 @@ import { ids } from "../core/ids.js";
 import type { Statement } from "../contracts/schemas.js";
 import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
 import { validateStatementWrite } from "./validateStatementWrite.js";
+import { immutableStatementContent } from "./statementContent.js";
 
 const asIso = (v: unknown): string | null => {
   if (v === null || v === undefined) return null;
@@ -54,25 +55,7 @@ function toStatement(r: Neo4jRecord): Statement {
 }
 
 function contentHash(statement: Omit<Statement, "status">): string {
-  return ids.sha256(JSON.stringify([
-    statement.subjectId,
-    statement.predicate,
-    statement.predicateQualifier ?? null,
-    statement.objectKind,
-    statement.objectId ?? null,
-    statement.objectValue ?? null,
-    statement.polarity,
-    statement.modality,
-    statement.assertedBy,
-    statement.epistemicStatus,
-    statement.confidence,
-    statement.extractionModel ?? null,
-    statement.extractionPromptHash ?? null,
-    statement.validFrom,
-    statement.validTo,
-    statement.timePrecision,
-    statement.validity,
-  ]));
+  return ids.sha256(JSON.stringify(immutableStatementContent(statement)));
 }
 
 export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
