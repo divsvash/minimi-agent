@@ -2,7 +2,7 @@
   "name": "minimi",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimi — conversational agent with persistent, temporal, relational memory. Slice 1: memory spine + fenced job ledger.",
+  "description": "Minimi — conversational agent with persistent, temporal, relational memory. Slices 1–2 shipped; Slice 3 extraction implemented and offline-verified (integration run pending approval).",
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
