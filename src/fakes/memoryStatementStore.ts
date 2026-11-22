@@ -104,8 +104,11 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
       if (JSON.stringify(immutableStatementContent(existing)) !== JSON.stringify(immutableStatementContent(incoming))) {
         throw new ConflictError(`statement ${incoming.id} already exists with different immutable content`);
       }
-      return structuredClone(existing);
+      // Deliberately NOT a return: Neo4j keeps processing a repeated write — it
+      // still MERGEs entities/evidence and (re)creates SUPPORTED_BY and ASSERTS
+      // relationships. The rest of this method mirrors that for the offline store.
     }
+
     for (const e of entities) {
       const prior = state.entities.get(e.id);
       if (prior) {
@@ -121,16 +124,26 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     for (const e of evidence) {
       const prior = state.evidence.get(e.id);
       if (prior) {
-        if (JSON.stringify(prior) !== JSON.stringify(e)) {
-          throw new ConflictError(`evidence ${e.id} already exists with different content`);
-        }
+        // Deliberate parity decision: Neo4j's `MERGE (e:Evidence {id: ev.id})
+        // ON CREATE SET ...` keeps the first write's properties and does NOT
+        // conflict when an id is reused. Evidence ids are content-addressed, so
+        // differing content under one id cannot arise from the extraction path;
+        // matching the real store keeps offline eval on the same contract.
         continue;
       }
       state.evidence.set(e.id, structuredClone(e));
     }
-    state.statements.set(incoming.id, incoming);
-    state.evidenceByStatement.set(incoming.id, evidence.map((e) => e.id));
-    return structuredClone(incoming);
+
+    // `MERGE (s)-[:SUPPORTED_BY]->(e)` accumulates across repeated writes. Keep
+    // first-seen link order and never duplicate a relationship.
+    const links = state.evidenceByStatement.get(incoming.id) ?? [];
+    for (const e of evidence) {
+      if (!links.includes(e.id)) links.push(e.id);
+    }
+    state.evidenceByStatement.set(incoming.id, links);
+
+    if (!existing) state.statements.set(incoming.id, incoming);
+    return structuredClone(existing ?? incoming);
   }
 
   /** Evidence spans that support `statementId`, in the order they were written. */

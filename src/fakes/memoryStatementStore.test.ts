@@ -304,3 +304,59 @@ test("a genuine immutable-content change still conflicts across different clocks
     "the rejected write must not replace first-write metadata",
   );
 });
+
+test("a repeated identical write keeps one statement and its provenance links", async () => {
+  const store = new InMemoryStatementStore();
+  const first = await store.insert({}, write());
+  const second = await store.insert({}, write({
+    statement: statement({ recordedAt: "2026-11-20T00:00:00.000Z" }),
+  }));
+
+  assert.equal(second.id, first.id);
+  assert.equal(store.allStatements().length, 1);
+  assert.equal(store.allEvidence().length, 1);
+  assert.equal(store.allEntities().length, 2);
+  assert.deepEqual(store.evidenceFor("stmt:1").map((e) => e.id), ["ev:1"]);
+  assert.equal(store.allStatements()[0]!.recordedAt, AT, "first-write metadata survives the retry");
+});
+
+test("a repeated write with additional evidence links it to the existing statement", async () => {
+  const store = new InMemoryStatementStore();
+  await store.insert({}, write());
+  const added = evidence({ id: "ev:2", spanStart: 23, spanEnd: 43, quote: " for the new service" });
+  await store.insert({}, write({ evidence: [evidence(), added] }));
+
+  assert.equal(store.allStatements().length, 1, "the statement is not duplicated");
+  assert.deepEqual(store.allEvidence().map((e) => e.id).sort(), ["ev:1", "ev:2"]);
+  assert.deepEqual(store.evidenceFor("stmt:1").map((e) => e.id), ["ev:1", "ev:2"]);
+  assert.equal(store.allStatements()[0]!.recordedAt, AT);
+});
+
+test("a conflicting immutable-content write cannot smuggle in extra evidence", async () => {
+  const store = new InMemoryStatementStore();
+  await store.insert({}, write());
+
+  await assert.rejects(
+    () => store.insert({}, write({
+      statement: statement({ predicate: "must_not_use" }),
+      evidence: [evidence(), evidence({ id: "ev:2", spanStart: 23, spanEnd: 43, quote: " for the new service" })],
+    })),
+    (err: unknown) => err instanceof ConflictError,
+  );
+
+  assert.equal(store.allStatements().length, 1);
+  assert.deepEqual(store.allEvidence().map((e) => e.id), ["ev:1"], "the conflicting write's evidence is not persisted");
+  assert.deepEqual(store.evidenceFor("stmt:1").map((e) => e.id), ["ev:1"]);
+});
+
+test("an evidence id reused with different content keeps first-write content (Neo4j MERGE parity)", async () => {
+  const store = new InMemoryStatementStore();
+  await store.insert({}, write());
+  await store.insert({}, write({
+    evidence: [evidence({ quote: "different text", spanStart: 2, spanEnd: 16 })],
+  }));
+
+  assert.equal(store.allEvidence().length, 1);
+  assert.equal(store.allEvidence()[0]!.quote, "We should use Postgres", "ON CREATE SET is first-write only in Neo4j too");
+  assert.deepEqual(store.evidenceFor("stmt:1").map((e) => e.id), ["ev:1"], "no duplicate SUPPORTED_BY link");
+});
