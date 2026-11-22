@@ -1,0 +1,35 @@
+{
+  "id": "ent-same-name-incompatible-types",
+  "title": "Resolution: a name match with an incompatible type cannot link",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-postgres-product",
+        "type": "product",
+        "canonicalName": "Postgres",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "Postgres", "type": "org" },
+      "context": "The Postgres foundation published guidance.",
+      "episodeId": "ep-ent-5"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "new_entity" },
+    { "path": "decision.candidateCount", "op": "eq", "value": 0 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Type incompatibility is a hard identity barrier: the same string must not be linked across entity types.",
+  "slice": 4
+}

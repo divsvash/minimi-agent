@@ -61,6 +61,12 @@ export interface EvalMetrics {
    * (§6.4, ADR-009).
    */
   falseUnchangedViolations: number;
+  /**
+   * Slice 4 safety gate: executed cases tagged `false_merge` with a failed
+   * `safety: true` assertion. An unauthorized identity merge is critical and is
+   * reported separately from ordinary ranking/case failures. Target is ALWAYS 0.
+   */
+  falseMergeViolations: number;
   /** Executed (non-pending) cases' latency distribution. */
   latencyMs: LatencyStats;
   /** Sum of recorded provider costs. See CostSummary.basis before treating this as measured. */
@@ -92,6 +98,9 @@ export function computeMetrics(results: CaseResult[]): EvalMetrics {
     temporalCorrectness: passRate(results, "temporal_correctness"),
     citationCoverage: passRate(results, "citation_coverage"),
     falseUnchangedViolations: executed.filter((r) => r.assertions.some(failedSafetyAssertion)).length,
+    falseMergeViolations: executed.filter(
+      (r) => r.metrics.includes("false_merge") && r.assertions.some(failedSafetyAssertion),
+    ).length,
     latencyMs: {
       p50: pctl(latencies, 50),
       p95: pctl(latencies, 95),

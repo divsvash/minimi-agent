@@ -9,6 +9,8 @@
  */
 import type {
   Entity, EntityType, Episode, EpisodeRole, Evidence, Job, Observation, Statement,
+  MergeEvent, SplitEvent, ResolutionOutcome, ResolutionDecision, ResolutionRequest,
+  MergePlan, SplitPlan, ScoredCandidate,
 } from "./schemas.js";
 
 export interface EpisodeStore {
@@ -113,20 +115,39 @@ export interface ObservationStore {
   recordCapture(capture: import("./schemas.js").Capture, observedObservationId?: string): Promise<void>;
 }
 
-export type EntityCandidate = {
-  entityId: string;
-  /** Candidate-generation score; similarity alone NEVER authorizes a merge (ADR-006). */
-  score: number;
-  reason: string;
-};
-
-export type ResolutionDecision =
-  | { kind: "link"; entityId: string; candidates: EntityCandidate[]; rationale: string }
-  | { kind: "create"; candidates: EntityCandidate[]; rationale: string }
-  | { kind: "review"; candidates: EntityCandidate[]; rationale: string };
+/** Kept as an alias: candidate ranking is explainable through recorded signals. */
+export type EntityCandidate = ScoredCandidate;
+export type { ResolutionDecision, ResolutionRequest } from "./schemas.js";
 
 export interface EntityResolver {
-  resolve(mention: { name: string; type?: EntityType; context?: string }): Promise<ResolutionDecision>;
+  resolve(request: ResolutionRequest): Promise<ResolutionDecision>;
+}
+
+/**
+ * Durable surface for Slice 4. Every mutating method takes the caller's fenced
+ * transaction handle; reads are plain queries. Implemented by both the Neo4j
+ * store and the deterministic offline twin. No merge/split is ever a side effect
+ * of candidate generation or ordinary extraction.
+ */
+export interface ResolutionStore<TX extends object = object> {
+  entities(): Promise<Entity[]>;
+  entityById(id: string): Promise<Entity | null>;
+  /** Statements whose effective subject/object is this entity (split-aware). */
+  statementIdsForEntity(entityId: string): Promise<string[]>;
+  evidenceIdsForStatements(statementIds: string[]): Promise<string[]>;
+  mergeEdges(): Promise<{ from: string; to: string }[]>;
+  mergeEvent(id: string): Promise<MergeEvent | null>;
+  splitEvent(id: string): Promise<SplitEvent | null>;
+  mergeEvents(): Promise<MergeEvent[]>;
+  splitEvents(): Promise<SplitEvent[]>;
+  outcomes(): Promise<ResolutionOutcome[]>;
+  putEntity(tx: TX, entity: Entity): Promise<Entity>;
+  /** Adds explicit aliases and the MERGED_INTO edge; preserves both entities. */
+  putMerge(tx: TX, event: MergeEvent, sourceId: string, target: Entity): Promise<void>;
+  /** Reassigns only the listed statements/aliases and records the audit event. */
+  putSplit(tx: TX, event: SplitEvent, source: Entity, created: Entity): Promise<void>;
+  addAlias(tx: TX, entityId: string, aliases: string[]): Promise<void>;
+  putOutcome(tx: TX, outcome: ResolutionOutcome): Promise<void>;
 }
 
 export interface RetrievalQuery {

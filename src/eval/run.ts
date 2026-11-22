@@ -69,6 +69,7 @@ export function formatReport(report: EvalReport): string {
   lines.push(`temporal correctness:          ${pct(m.temporalCorrectness)}`);
   lines.push(`citation coverage:             ${pct(m.citationCoverage)}`);
   lines.push(`false-unchanged violations:    ${m.falseUnchangedViolations} (must be 0)`);
+  lines.push(`false merges (critical):       ${m.falseMergeViolations} (must be 0)`);
   lines.push(`latency ms  p50=${m.latencyMs.p50.toFixed(1)}  p95=${m.latencyMs.p95.toFixed(1)}  max=${m.latencyMs.max.toFixed(1)}`);
   lines.push(
     report.cost.basis === "measured"

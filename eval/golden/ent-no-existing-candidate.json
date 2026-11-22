@@ -1,0 +1,36 @@
+{
+  "id": "ent-no-existing-candidate",
+  "title": "Resolution: no candidate yields a new unresolved entity",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-hubspot",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "Zebra", "type": "product" },
+      "context": "We tried Zebra.",
+      "episodeId": "ep-ent-7"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "new_entity" },
+    { "path": "decision.candidateCount", "op": "eq", "value": 0 },
+    { "path": "decision.entityId", "op": "exists" },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "With no credible existing candidate the resolver creates a new identity rather than forcing a dubious link.",
+  "slice": 4
+}

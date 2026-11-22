@@ -1,0 +1,54 @@
+{
+  "id": "ent-multiple-plausible-candidates",
+  "title": "Resolution: three plausible candidates remain ambiguous",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-atlas-crm",
+        "type": "product",
+        "canonicalName": "Atlas CRM",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-atlas-analytics",
+        "type": "product",
+        "canonicalName": "Atlas Analytics",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-atlas-cloud",
+        "type": "product",
+        "canonicalName": "Atlas Cloud",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "Atlas", "type": "product" },
+      "context": "We considered Atlas.",
+      "episodeId": "ep-ent-6"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "ambiguous" },
+    { "path": "decision.candidateCount", "op": "gte", "value": 2 },
+    { "path": "decision.entityId", "op": "eq", "value": null },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Ranking must not silently choose the top candidate when several are plausible.",
+  "slice": 4
+}

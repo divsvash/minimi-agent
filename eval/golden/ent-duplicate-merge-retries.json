@@ -1,0 +1,48 @@
+{
+  "id": "ent-duplicate-merge-retries",
+  "title": "Merge: repeating the same explicit plan is idempotent",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "merge",
+    "entities": [
+      {
+        "id": "ent-source",
+        "type": "product",
+        "canonicalName": "HubSpot CRM",
+        "aliases": ["HSM"],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-target",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "repeats": 3,
+    "merge": {
+      "sourceId": "ent-source",
+      "targetId": "ent-target",
+      "authorization": "user-confirmed:u-42",
+      "reason": "same vendor, confirmed by the user",
+      "aliases": ["HSM"]
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.mergeEvents", "op": "eq", "value": 1 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 1 },
+    { "path": "counts.entities", "op": "eq", "value": 2 },
+    { "path": "mergeEvents.0.id", "op": "exists" }
+  ],
+  "metrics": ["entity_resolution"],
+  "noChangeTrap": false,
+  "rationale": "Three identical merge requests produce exactly one event and one edge; the event id is deterministic across replays.",
+  "slice": 4
+}

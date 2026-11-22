@@ -1,0 +1,48 @@
+{
+  "id": "ent-split-exact-reassignment",
+  "title": "Split: an explicit plan reassigns only the listed statements and evidence",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "split",
+    "entities": [
+      {
+        "id": "ent-source",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": ["HubSpot CRM", "HSM"],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "links": [
+      { "entityId": "ent-source", "statementIds": ["stmt:1", "stmt:2"], "evidenceIds": ["ev:1", "ev:2"] }
+    ],
+    "repeats": 2,
+    "split": {
+      "sourceId": "ent-source",
+      "canonicalName": "HubSpot CRM",
+      "type": "product",
+      "statementIds": ["stmt:1"],
+      "evidenceIds": ["ev:1"],
+      "aliases": ["HubSpot CRM"],
+      "authorization": "user-split:u-44",
+      "reason": "CRM statements belong to a separate product"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.splitEvents", "op": "eq", "value": 1 },
+    { "path": "counts.entities", "op": "eq", "value": 2 },
+    { "path": "splitEvents.0.statementIds.length", "op": "eq", "value": 1 },
+    { "path": "splitEvents.0.statementIds.0", "op": "eq", "value": "stmt:1" },
+    { "path": "splitEvents.0.evidenceIds.0", "op": "eq", "value": "ev:1" },
+    { "path": "entities.0.status", "op": "eq", "value": "split" },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution"],
+  "noChangeTrap": false,
+  "rationale": "Only the explicitly listed statement/evidence pair is reassigned; a repeated split is idempotent and keeps one SplitEvent.",
+  "slice": 4
+}

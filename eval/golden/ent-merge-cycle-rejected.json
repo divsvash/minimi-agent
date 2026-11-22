@@ -1,0 +1,57 @@
+{
+  "id": "ent-merge-cycle-rejected",
+  "title": "Merge: a cycle-forming MERGED_INTO is rejected",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "merge",
+    "entities": [
+      {
+        "id": "ent-a",
+        "type": "product",
+        "canonicalName": "Atlas",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-b",
+        "type": "product",
+        "canonicalName": "Atlas CRM",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-c",
+        "type": "product",
+        "canonicalName": "Atlas Cloud",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "edges": [{ "from": "ent-b", "to": "ent-a" }],
+    "merge": {
+      "sourceId": "ent-a",
+      "targetId": "ent-b",
+      "authorization": "user-confirmed:u-43",
+      "reason": "attempted reverse link",
+      "aliases": []
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "rejected" },
+    { "path": "error", "op": "includes", "value": "cycle" },
+    { "path": "counts.mergeEvents", "op": "eq", "value": 0, "safety": true, "description": "a rejected cycle must not create an audit event" },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 1 },
+    { "path": "counts.entities", "op": "eq", "value": 3 }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Traversing MERGED_INTO from the target reaches the source, so the merge is refused with no new edge or event.",
+  "slice": 4
+}

@@ -259,3 +259,151 @@ export const ExtractResultSchema = z.object({
   candidates: z.array(CandidateStatementSchema).max(32),
 });
 export type ExtractResult = z.infer<typeof ExtractResultSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Slice 4: entity resolution
+ * ------------------------------------------------------------------ */
+
+/** Signals that may GENERATE a candidate. None of them alone authorizes identity. */
+export const CandidateSignalKindSchema = z.enum([
+  "exact_canonical_name",
+  "exact_alias",
+  "normalized_name",
+  "external_id",
+  "confirmed_entity",
+  "same_type",
+  "trigram",
+  "embedding",
+  "type_mismatch",
+]);
+export const CandidateSignalSchema = z.object({
+  kind: CandidateSignalKindSchema,
+  detail: z.string(),
+  score: z.number().min(0),
+});
+
+export const ScoredCandidateSchema = z.object({
+  entityId: z.string().min(1),
+  canonicalName: z.string().min(1),
+  type: EntityTypeSchema,
+  score: z.number().min(0),
+  signals: z.array(CandidateSignalSchema),
+  /** True only for an identity-authoritative signal (ADR-006), never for similarity. */
+  authoritative: z.boolean(),
+});
+export type ScoredCandidate = z.infer<typeof ScoredCandidateSchema>;
+export type CandidateSignal = z.infer<typeof CandidateSignalSchema>;
+
+export const IdentityEvidenceSchema = z.object({
+  /** An external identifier already known to designate this identity (e.g. {wikidata: "Q42"}). */
+  externalIds: z.record(z.string()).optional(),
+  /** An entity id the user previously confirmed as the same identity (remembered policy). */
+  confirmedEntityId: z.string().min(1).optional(),
+});
+
+export const ResolutionRequestSchema = z.object({
+  mention: CandidateEntityMentionSchema,
+  context: z.string().optional(),
+  episodeId: z.string().optional(),
+  evidence: IdentityEvidenceSchema.optional(),
+});
+export type ResolutionRequest = z.infer<typeof ResolutionRequestSchema>;
+
+export const ResolutionDecisionSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("matched"),
+    entityId: z.string().min(1),
+    resolutionId: z.string().min(1),
+    candidates: z.array(ScoredCandidateSchema),
+    rationale: z.string().min(1),
+  }),
+  z.object({
+    outcome: z.literal("new_entity"),
+    entityId: z.string().min(1),
+    resolutionId: z.string().min(1),
+    candidates: z.array(ScoredCandidateSchema),
+    rationale: z.string().min(1),
+  }),
+  z.object({
+    outcome: z.literal("ambiguous"),
+    resolutionId: z.string().min(1),
+    candidates: z.array(ScoredCandidateSchema),
+    rationale: z.string().min(1),
+  }),
+  z.object({
+    outcome: z.literal("review_required"),
+    resolutionId: z.string().min(1),
+    candidates: z.array(ScoredCandidateSchema),
+    rationale: z.string().min(1),
+  }),
+]);
+export type ResolutionDecision = z.infer<typeof ResolutionDecisionSchema>;
+
+export const MergePlanSchema = z.object({
+  sourceId: z.string().min(1),
+  targetId: z.string().min(1),
+  /** Explicit, remembered authorization for this identity action. Never inferred. */
+  authorization: z.string().min(1),
+  reason: z.string().min(1),
+  /** Aliases explicitly transferred to the target; unlisted aliases stay with the source. */
+  aliases: z.array(z.string().min(1)).default([]),
+});
+export type MergePlan = z.infer<typeof MergePlanSchema>;
+
+export const SplitPlanSchema = z.object({
+  sourceId: z.string().min(1),
+  /** Deterministic id when omitted; explicit when the caller designates the new entity. */
+  newEntityId: z.string().min(1).optional(),
+  type: EntityTypeSchema,
+  canonicalName: z.string().min(1),
+  statementIds: z.array(z.string().min(1)).default([]),
+  evidenceIds: z.array(z.string().min(1)).default([]),
+  /** Aliases explicitly transferred to the new entity; never inferred. */
+  aliases: z.array(z.string().min(1)).default([]),
+  authorization: z.string().min(1),
+  reason: z.string().min(1),
+});
+export type SplitPlan = z.infer<typeof SplitPlanSchema>;
+
+export const MergeEventSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("merge"),
+  sourceId: z.string().min(1),
+  targetId: z.string().min(1),
+  aliases: z.array(z.string()),
+  authorization: z.string(),
+  reason: z.string(),
+  planHash: z.string(),
+  recordedAt: isoDateTime,
+});
+export type MergeEvent = z.infer<typeof MergeEventSchema>;
+
+export const SplitEventSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("split"),
+  sourceId: z.string().min(1),
+  newEntityId: z.string().min(1),
+  statementIds: z.array(z.string()),
+  evidenceIds: z.array(z.string()),
+  aliases: z.array(z.string()),
+  authorization: z.string(),
+  reason: z.string(),
+  planHash: z.string(),
+  recordedAt: isoDateTime,
+});
+export type SplitEvent = z.infer<typeof SplitEventSchema>;
+
+export const ResolutionOutcomeSchema = z.object({
+  id: z.string().min(1),
+  resolutionId: z.string().min(1),
+  episodeId: z.string().optional(),
+  statementId: z.string().optional(),
+  mentionName: z.string().min(1),
+  mentionType: EntityTypeSchema.optional(),
+  outcome: z.enum(["matched", "new_entity", "ambiguous", "review_required"]),
+  entityId: z.string().optional(),
+  candidates: z.array(ScoredCandidateSchema),
+  rationale: z.string(),
+  recordedAt: isoDateTime,
+});
+export type ResolutionOutcome = z.infer<typeof ResolutionOutcomeSchema>;

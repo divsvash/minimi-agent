@@ -3,6 +3,7 @@ import { dayRangeUtc } from "../core/time.js";
 import { EpisodeSchema, type Episode } from "../contracts/schemas.js";
 import { InMemoryEpisodeStore } from "../fakes/memoryEpisodeStore.js";
 import { extractionEpisodeHandler } from "./extractionSut.js";
+import { entityResolutionHandler } from "./entityResolutionSut.js";
 import type { SutRegistry } from "./harness.js";
 
 /**
@@ -62,4 +63,11 @@ export const sutRegistry: SutRegistry = {
    * `provider: fake-llm-1` and `semanticQuality: not_measured`.
    */
   "extraction.episode": extractionEpisodeHandler,
+
+  /**
+   * Slice 4 entity resolution: real candidate generation + decision policy over
+   * deterministic fakes. Similarity never authorizes a merge; merges/splits are
+   * explicit operations with audit events. Scripted vectors are not semantics.
+   */
+  "entity.resolve": entityResolutionHandler,
 };

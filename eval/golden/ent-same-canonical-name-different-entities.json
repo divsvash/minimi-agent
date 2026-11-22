@@ -1,0 +1,45 @@
+{
+  "id": "ent-same-canonical-name-different-entities",
+  "title": "Resolution: the same name on two entities is ambiguous, never a merge",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-atlas-a",
+        "type": "product",
+        "canonicalName": "Atlas",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-atlas-b",
+        "type": "product",
+        "canonicalName": "Atlas",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "Atlas", "type": "product" },
+      "context": "We evaluated Atlas.",
+      "episodeId": "ep-ent-2"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "ambiguous" },
+    { "path": "decision.entityId", "op": "eq", "value": null },
+    { "path": "decision.candidateCount", "op": "eq", "value": 2 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true, "description": "no identity is chosen, so nothing may merge" }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Two authoritative exact-name candidates cannot be distinguished; identity stays unresolved and zero edges are written.",
+  "slice": 4
+}

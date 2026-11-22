@@ -1,0 +1,36 @@
+{
+  "id": "ent-different-alias-same-entity",
+  "title": "Resolution: an authoritative alias links to its owner",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-hubspot",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": ["HubSpot CRM"],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "HubSpot CRM", "type": "product" },
+      "context": "HubSpot CRM was shortlisted.",
+      "episodeId": "ep-ent-3"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "matched" },
+    { "path": "decision.entityId", "op": "eq", "value": "ent-hubspot" },
+    { "path": "decision.signals.0", "op": "includes", "value": "exact_alias" },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "An existing exact alias is an authoritative mapping (ADR-006), so the mention links directly without a merge.",
+  "slice": 4
+}

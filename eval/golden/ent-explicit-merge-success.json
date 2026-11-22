@@ -1,0 +1,51 @@
+{
+  "id": "ent-explicit-merge-success",
+  "title": "Merge: explicit authorization creates an audit event and a soft MERGED_INTO edge",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "merge",
+    "entities": [
+      {
+        "id": "ent-source",
+        "type": "product",
+        "canonicalName": "HubSpot CRM",
+        "aliases": ["HSM"],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-target",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "merge": {
+      "sourceId": "ent-source",
+      "targetId": "ent-target",
+      "authorization": "user-confirmed:u-42",
+      "reason": "same vendor, confirmed by the user",
+      "aliases": ["HSM"]
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.entities", "op": "eq", "value": 2 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 1 },
+    { "path": "counts.mergeEvents", "op": "eq", "value": 1 },
+    { "path": "counts.splitEvents", "op": "eq", "value": 0 },
+    { "path": "edges.0.from", "op": "eq", "value": "ent-source" },
+    { "path": "edges.0.to", "op": "eq", "value": "ent-target" },
+    { "path": "entities.0.status", "op": "eq", "value": "merged" },
+    { "path": "mergeEvents.0.aliases", "op": "includes", "value": "HSM" }
+  ],
+  "metrics": ["entity_resolution"],
+  "noChangeTrap": false,
+  "rationale": "An explicit merge keeps both records, writes one MERGED_INTO edge and one immutable MergeEvent.",
+  "slice": 4
+}

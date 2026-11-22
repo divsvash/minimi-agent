@@ -1,0 +1,45 @@
+{
+  "id": "ent-alias-ownership-after-split",
+  "title": "Split: alias ownership follows the explicit plan only",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "split",
+    "entities": [
+      {
+        "id": "ent-source",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": ["HubSpot CRM", "HSM"],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "links": [
+      { "entityId": "ent-source", "statementIds": ["stmt:1"], "evidenceIds": ["ev:1"] }
+    ],
+    "split": {
+      "sourceId": "ent-source",
+      "canonicalName": "HubSpot Marketing",
+      "type": "product",
+      "statementIds": ["stmt:1"],
+      "evidenceIds": ["ev:1"],
+      "aliases": ["HSM"],
+      "authorization": "user-split:u-45",
+      "reason": "HSM is the marketing product"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.entities", "op": "eq", "value": 2 },
+    { "path": "entities.1.aliases", "op": "includes", "value": "HSM" },
+    { "path": "entities.0.aliases.length", "op": "eq", "value": 1 },
+    { "path": "entities.0.aliases", "op": "includes", "value": "HubSpot CRM" },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Only HSM is transferred. HubSpot CRM stays with the source; no alias moves by inference.",
+  "slice": 4
+}

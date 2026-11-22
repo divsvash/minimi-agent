@@ -38,4 +38,12 @@ export const MIGRATIONS: { id: string; cypher: string[] }[] = [
       "CREATE INDEX entity_canonical IF NOT EXISTS FOR (e:Entity) ON (e.canonicalName)",
     ],
   },
+  {
+    id: "0004_resolution_audit",
+    cypher: [
+      "CREATE CONSTRAINT merge_event_id IF NOT EXISTS FOR (e:MergeEvent) REQUIRE e.id IS UNIQUE",
+      "CREATE CONSTRAINT split_event_id IF NOT EXISTS FOR (e:SplitEvent) REQUIRE e.id IS UNIQUE",
+      "CREATE CONSTRAINT resolution_outcome_id IF NOT EXISTS FOR (o:ResolutionOutcome) REQUIRE o.id IS UNIQUE",
+    ],
+  },
 ];

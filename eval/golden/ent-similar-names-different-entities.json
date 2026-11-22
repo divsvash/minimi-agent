@@ -1,0 +1,44 @@
+{
+  "id": "ent-similar-names-different-entities",
+  "title": "Resolution: similar names for distinct products stay ambiguous",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-hubspot",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      },
+      {
+        "id": "ent-hubspot-crm",
+        "type": "product",
+        "canonicalName": "HubSpot CRM",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "HubSpot CR", "type": "product" },
+      "context": "We looked at HubSpot CR.",
+      "episodeId": "ep-ent-4"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "ambiguous" },
+    { "path": "decision.entityId", "op": "eq", "value": null },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true, "description": "trigram similarity must never authorize identity" }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Two name-similar products cannot be told apart from the mention alone; no winner is chosen and no merge occurs.",
+  "slice": 4
+}

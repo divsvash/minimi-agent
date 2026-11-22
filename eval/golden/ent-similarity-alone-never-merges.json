@@ -1,0 +1,41 @@
+{
+  "id": "ent-similarity-alone-never-merges",
+  "title": "Adversarial: a very high cosine similarity without identity evidence cannot merge",
+  "kind": "adversarial",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-atlas-crm",
+        "type": "product",
+        "canonicalName": "Atlas CRM",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "Atlas", "type": "product" },
+      "context": "We discussed Atlas.",
+      "episodeId": "ep-ent-13"
+    },
+    "embeddings": {
+      "Atlas": [1, 0],
+      "Atlas CRM": [1, 0]
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "provider", "op": "eq", "value": "scripted-embed-1" },
+    { "path": "decision.outcome", "op": "eq", "value": "review_required" },
+    { "path": "decision.signals.0", "op": "includes", "value": "embedding" },
+    { "path": "decision.entityId", "op": "eq", "value": null },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true, "description": "cosine similarity is a candidate signal only, never a merge authorization" }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "Even a scripted cosine of 1.0 with no corroborating identity evidence lands in review_required with zero MERGED_INTO edges.",
+  "slice": 4
+}

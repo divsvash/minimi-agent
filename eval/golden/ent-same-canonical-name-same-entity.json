@@ -1,0 +1,37 @@
+{
+  "id": "ent-same-canonical-name-same-entity",
+  "title": "Resolution: an exact canonical name under the same type links to one entity",
+  "kind": "scenario",
+  "sut": "entity.resolve",
+  "input": {
+    "mode": "resolve",
+    "entities": [
+      {
+        "id": "ent-hubspot",
+        "type": "product",
+        "canonicalName": "HubSpot",
+        "aliases": [],
+        "status": "active",
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "updatedAt": "2026-11-01T00:00:00.000Z"
+      }
+    ],
+    "request": {
+      "mention": { "name": "HubSpot", "type": "product" },
+      "context": "We use HubSpot for CRM.",
+      "episodeId": "ep-ent-1"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "decision.outcome", "op": "eq", "value": "matched" },
+    { "path": "decision.entityId", "op": "eq", "value": "ent-hubspot" },
+    { "path": "decision.candidateCount", "op": "eq", "value": 1 },
+    { "path": "counts.entities", "op": "eq", "value": 1 },
+    { "path": "counts.mergeEdges", "op": "eq", "value": 0, "safety": true, "description": "a match is a link, never a merge" }
+  ],
+  "metrics": ["entity_resolution", "false_merge"],
+  "noChangeTrap": false,
+  "rationale": "A single authoritative canonical-name candidate links without creating any MERGED_INTO edge.",
+  "slice": 4
+}

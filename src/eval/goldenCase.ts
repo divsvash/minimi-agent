@@ -14,6 +14,10 @@ export const GoldenMetricSchema = z.enum([
   "negation_modality",
   "unsupported_assertion",
   "idempotent_retry",
+  // Slice 4 entity resolution. `false_merge` cases carry a safety assertion so
+  // an unauthorized MERGED_INTO is counted as critical, not a ranking error.
+  "entity_resolution",
+  "false_merge",
 ]);
 export type GoldenMetric = z.infer<typeof GoldenMetricSchema>;
 
