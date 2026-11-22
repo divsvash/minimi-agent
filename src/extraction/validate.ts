@@ -7,6 +7,25 @@ import type { StatementWrite } from "../contracts/ports.js";
 /** Bump when the candidate contract or validation semantics change. */
 export const EXTRACTION_SCHEMA_VERSION = "candidate/1";
 
+/**
+ * Deliberately small, closed vocabulary of normalized predicates the extractor
+ * may persist. This is a provenance boundary, not semantic entailment: it keeps
+ * arbitrary model-invented relationships out of memory without a web of regexes.
+ * Extend only by editing this set deliberately (together with the prompt).
+ */
+export const EXTRACTION_PREDICATES = new Set([
+  // grounded actions and decisions
+  "adopt", "choose", "decide", "go_with", "migrate_to", "reject", "select", "shortlist", "shortlisted", "use",
+  // preferences and evaluations
+  "compare", "consider", "evaluate", "is", "is_too_expensive", "prefer", "recommend",
+  // capabilities and state
+  "has", "have", "require", "support",
+  // the explicit question meta-form permitted by the extraction prompt
+  "asked_about",
+  // modality-decorated forms that occur verbatim in grounded text
+  "must_not_use", "should_use",
+]);
+
 export const RESERVED_QUALIFIER_KEYS = new Set([
   "statementType",
   "decisionStatus",
@@ -283,6 +302,12 @@ export function validateCandidates(args: {
     if (!contains(text, subjectName)) {
       errors.push(`subject '${candidate.subject.name}' does not appear in the source episode`);
     }
+    // The cited span itself must establish the subject. A subject that merely
+    // occurs elsewhere in the episode cannot support a relationship attached
+    // to an unrelated quote.
+    if (!contains(quote, subjectName)) {
+      errors.push(`subject '${candidate.subject.name}' does not appear in the cited source span`);
+    }
 
     const objectName = candidate.object.kind === "entity"
       ? normalizeMention(candidate.object.name)
@@ -338,7 +363,11 @@ export function validateCandidates(args: {
     }
 
     const predicate = normalizePredicate(candidate.predicate);
-    if (!predicate) errors.push("predicate is empty after normalization");
+    if (!predicate) {
+      errors.push("predicate is empty after normalization");
+    } else if (!EXTRACTION_PREDICATES.has(predicate)) {
+      errors.push(`predicate '${candidate.predicate}' is not in the extraction predicate vocabulary`);
+    }
 
     if (errors.length > 0) {
       rejected.push({ index, candidate, errors });

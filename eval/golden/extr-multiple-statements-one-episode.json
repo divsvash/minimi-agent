@@ -15,10 +15,10 @@
       "tz": "Europe/Lisbon",
       "source": "chat",
       "createdAt": "2026-11-16T09:00:00.000Z",
-      "text": "We use Terraform for infrastructure and PagerDuty for alerts."
+      "text": "We use Terraform for infrastructure. We use PagerDuty for alerts."
     },
     "responses": [
-      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"Terraform\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"We use Terraform for infrastructure\",\"spanStart\":0,\"spanEnd\":35}},{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"PagerDuty\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"and PagerDuty for alerts\",\"spanStart\":36,\"spanEnd\":60}}]}"
+      "{\"candidates\":[{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"Terraform\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"We use Terraform for infrastructure\",\"spanStart\":0,\"spanEnd\":35}},{\"confidence\":0.8,\"subject\":{\"name\":\"We\"},\"predicate\":\"use\",\"object\":{\"kind\":\"entity\",\"name\":\"PagerDuty\",\"type\":\"product\"},\"polarity\":\"positive\",\"modality\":\"asserted\",\"category\":\"fact\",\"evidence\":{\"quote\":\"We use PagerDuty for alerts\",\"spanStart\":37,\"spanEnd\":64}}]}"
     ],
     "labels": [
       {
@@ -71,7 +71,7 @@
     {
       "path": "statements.1.evidence.0.spanStart",
       "op": "eq",
-      "value": 36
+      "value": 37
     },
     {
       "path": "scores.precision",

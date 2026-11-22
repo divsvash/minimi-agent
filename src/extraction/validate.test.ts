@@ -105,6 +105,31 @@ test("an invented subject or an object outside the cited span is rejected", () =
     "object 'MySQL' does not appear in the cited source span");
 });
 
+test("the cited span must contain the subject, not just the episode", () => {
+  const text = "We discussed several databases. Later, Postgres came up.";
+  const ep = episode({
+    id: "ep-provenance", externalId: "ext-provenance", text,
+    occurredAt: "2026-11-17T13:00:00.000Z",
+  });
+  const quote = "Later, Postgres came up.";
+  const start = text.indexOf(quote);
+  has(errorsFor(candidate({
+    subject: { name: "We" },
+    predicate: "use",
+    object: { kind: "entity", name: "Postgres", type: "product" },
+    modality: "asserted",
+    evidence: { quote, spanStart: start, spanEnd: start + quote.length },
+  }), ep), "subject 'We' does not appear in the cited source span");
+
+  assert.equal(run([candidate()]).rejected.length, 0, "a grounded subject in the cited span is still accepted");
+});
+
+test("an arbitrary model-invented predicate is rejected by the closed vocabulary", () => {
+  has(errorsFor(candidate({ predicate: "secretly replaced" })),
+    "predicate 'secretly replaced' is not in the extraction predicate vocabulary");
+  assert.equal(run([candidate({ predicate: "prefer" })]).rejected.length, 0, "a vocabulary predicate is accepted");
+});
+
 test("negative polarity requires a negation cue in the cited sentence", () => {
   has(errorsFor(candidate({ polarity: "negative" })), "negation cue");
 
