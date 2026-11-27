@@ -190,7 +190,12 @@ export class InMemoryResolutionStore implements ResolutionStore<object>, Snapsho
     const change: { subjectId?: string; objectId?: string } = { ...state.reassigned.get(args.statementId) };
     const subjectId = change.subjectId ?? statement.subjectId;
     const objectId = statement.objectKind === "entity" ? (change.objectId ?? statement.objectId) : undefined;
-    if (subjectId === args.fromEntityId) change.subjectId = args.toEntityId;
+    if (subjectId === args.fromEntityId) {
+      change.subjectId = args.toEntityId;
+      // Keep the statement store's relationship index in step so forSubject()
+      // and activeAt() agree with the resolved graph.
+      this.statements.setSubjectEdgeIn(tx, args.statementId, args.toEntityId);
+    }
     if (objectId === args.fromEntityId) change.objectId = args.toEntityId;
     state.reassigned.set(args.statementId, change);
 
@@ -249,7 +254,10 @@ export class InMemoryResolutionStore implements ResolutionStore<object>, Snapsho
     for (const statementId of event.statementIds) {
       const effective = this.effective(statementId);
       const change: { subjectId?: string; objectId?: string } = { ...state.reassigned.get(statementId) };
-      if (effective?.subjectId === event.sourceId) change.subjectId = created.id;
+      if (effective?.subjectId === event.sourceId) {
+        change.subjectId = created.id;
+        this.statements.setSubjectEdgeIn(tx, statementId, created.id);
+      }
       if (effective?.objectId === event.sourceId) change.objectId = created.id;
       state.reassigned.set(statementId, change);
     }

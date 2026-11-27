@@ -10,6 +10,8 @@ interface StoreState {
   evidence: Map<string, Evidence>;
   entities: Map<string, Entity>;
   evidenceByStatement: Map<string, string[]>;
+  /** Mirrors Neo4j's `(s)-[:SUBJECT]->(e)` edge, which resolution may re-point. */
+  subjectByStatement: Map<string, string>;
 }
 
 /**
@@ -23,6 +25,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
   private readonly entities = new Map<string, Entity>();
   /** Mirrors Neo4j's `(s)-[:SUPPORTED_BY]->(e)` edge so provenance is queryable offline. */
   private readonly evidenceByStatement = new Map<string, string[]>();
+  private readonly subjectByStatement = new Map<string, string>();
 
   /** Live (committed) state, read by every query method. */
   private liveState(): StoreState {
@@ -31,6 +34,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
       evidence: this.evidence,
       entities: this.entities,
       evidenceByStatement: this.evidenceByStatement,
+      subjectByStatement: this.subjectByStatement,
     };
   }
 
@@ -43,6 +47,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
       evidence: copy(this.evidence),
       entities: copy(this.entities),
       evidenceByStatement: copy(this.evidenceByStatement),
+      subjectByStatement: copy(this.subjectByStatement),
     };
   }
 
@@ -56,6 +61,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     replace(this.evidence, state.evidence);
     replace(this.entities, state.entities);
     replace(this.evidenceByStatement, state.evidenceByStatement);
+    replace(this.subjectByStatement, state.subjectByStatement);
   }
 
   async byId(id: string): Promise<Statement | null> {
@@ -71,7 +77,20 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
   }
 
   async forSubject(subjectId: string): Promise<Statement[]> {
-    return this.sortedStatements().filter((s) => s.subjectId === subjectId).map((s) => structuredClone(s));
+    return this.sortedStatements()
+      .filter((s) => this.subjectFor(s.id, s) === subjectId)
+      .map((s) => structuredClone(s));
+  }
+
+  /** Relationship-based subject id; the immutable `subjectId` property is never edited. */
+  private subjectFor(statementId: string, statement: Statement): string {
+    return this.subjectByStatement.get(statementId) ?? statement.subjectId;
+  }
+
+  /** Used by resolution/split inside the caller's fence to re-point SUBJECT. */
+  setSubjectEdgeIn(tx: object, statementId: string, entityId: string): void {
+    const state = isMemoryTransaction(tx) ? tx.workingCopy<StoreState>(this) : this.liveState();
+    if (state.statements.has(statementId)) state.subjectByStatement.set(statementId, entityId);
   }
 
   async activeAt(filter: ActiveAtFilter): Promise<Statement[]> {
@@ -85,7 +104,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
         return (from === null || from <= t) && (to === null || to > t);
       })
       .filter((s) => !filter.asOfTx || new Date(s.recordedAt).getTime() <= filter.asOfTx.getTime())
-      .filter((s) => !filter.subjectId || s.subjectId === filter.subjectId)
+      .filter((s) => !filter.subjectId || this.subjectFor(s.id, s) === filter.subjectId)
       .filter((s) => !filter.predicate || s.predicate === filter.predicate)
       .filter((s) => !filter.modality || s.modality === filter.modality)
       .map((s) => structuredClone(s));
@@ -149,7 +168,11 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     }
     state.evidenceByStatement.set(incoming.id, links);
 
-    if (!existing) state.statements.set(incoming.id, incoming);
+    if (!existing) {
+      state.statements.set(incoming.id, incoming);
+      // First write only: a retry must not reset a SUBJECT edge re-pointed by resolution.
+      state.subjectByStatement.set(incoming.id, incoming.subjectId);
+    }
     return structuredClone(existing ?? incoming);
   }
 
@@ -190,6 +213,7 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     this.evidence.clear();
     this.entities.clear();
     this.evidenceByStatement.clear();
+    this.subjectByStatement.clear();
   }
 
   get size(): number {

@@ -189,6 +189,51 @@ test("extraction integration records resolutions inside the fenced commit", asyn
   assert.ok((await store.entityById("ent-postgres"))!.aliases.includes("Postgres"));
 });
 
+test("subject query paths agree on the resolved entity, not the mention-scoped id", async () => {
+  const clock = fixedClock(new Date(AT));
+  const TEXT = "We should use Postgres for the new service.";
+  const episode: Episode = {
+    id: "ep-subject-query", externalId: "ext-subject-query", sessionId: "sess", seq: 0,
+    role: "user", text: TEXT, occurredAt: "2026-11-16T09:00:00.000Z",
+    precision: "second", tz: "UTC", source: "chat", createdAt: "2026-11-16T09:00:00.000Z",
+  };
+  const provider = new FakeLLMProvider(() => ({
+    text: JSON.stringify({ candidates: [{
+      subject: { name: "We" }, predicate: "should use",
+      object: { kind: "entity", name: "Postgres", type: "product" },
+      polarity: "positive", modality: "proposed", decisionStatus: "proposed", confidence: 0.8,
+      evidence: { quote: TEXT, spanStart: 0, spanEnd: TEXT.length },
+    }] }),
+    model: "fake-llm-1", usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop",
+  }));
+  const statements = new InMemoryStatementStore();
+  const store = new InMemoryResolutionStore(statements, clock);
+  await store.putEntity({}, entity({ id: "ent-we", type: "concept", canonicalName: "We" }));
+  const handler = new ExtractionJobHandler<object>({
+    episodes: { byId: async () => episode },
+    extractor: new ExtractionService({ provider, clock, timeoutMs: 0 }),
+    statements,
+    resolver: new EntityResolutionService(store, { clock }),
+    resolutions: store,
+    clock,
+  });
+  const ledger = new InMemoryJobLedger();
+  const worker = new JobWorker<object>(ledger, [handler], { workerId: "w", leaseRenewMs: 0, idleDelayMs: 0 });
+  ledger.enqueue("extract", { episodeId: episode.id }, "extract:subject-query", { maxAttempts: 1 });
+  assert.equal(await worker.runOnce(), "completed");
+
+  const statement = statements.allStatements()[0]!;
+  const mentionScopedId = statement.subjectId; // immutable property stays as extracted
+  const resolvedId = (await store.outcomes()).find((o) => o.outcome === "matched")!.entityId!;
+  assert.equal(resolvedId, "ent-we");
+
+  assert.deepEqual((await statements.forSubject(resolvedId)).map((s) => s.id), [statement.id]);
+  assert.deepEqual((await statements.activeAt({ subjectId: resolvedId })).map((s) => s.id), [statement.id]);
+  assert.deepEqual(await statements.forSubject(mentionScopedId), [], "the old mention id no longer owns the statement");
+  assert.deepEqual(await statements.activeAt({ subjectId: mentionScopedId }), []);
+  assert.equal((await statements.byId(statement.id))!.subjectId, mentionScopedId, "immutable property is unchanged");
+});
+
 test("a new_entity decision persists its generated id and re-points the statement", async () => {
   const clock = fixedClock(new Date(AT));
   const TEXT = "We should use Postgres for the new service.";

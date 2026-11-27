@@ -103,10 +103,10 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
       clauses.push("s.recordedAt <= datetime($asOfTx)");
       params.asOfTx = filter.asOfTx.toISOString();
     }
-    if (filter.subjectId) {
-      clauses.push("s.subjectId = $subjectId");
-      params.subjectId = filter.subjectId;
-    }
+    // Subject filtering follows the SUBJECT relationship, not the immutable
+    // `s.subjectId` property (which Slice 4 deliberately leaves as extracted).
+    // This keeps activeAt() and forSubject() in agreement after resolution.
+    if (filter.subjectId) params.subjectId = filter.subjectId;
     if (filter.predicate) {
       clauses.push("s.predicate = $predicate");
       params.predicate = filter.predicate;
@@ -115,10 +115,14 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
       clauses.push("s.modality = $modality");
       params.modality = filter.modality;
     }
+    const match = filter.subjectId
+      ? "MATCH (s:Statement)-[:SUBJECT]->(:Entity {id: $subjectId})"
+      : "MATCH (s:Statement)";
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
     const session = newSession(this.driver, "READ");
     try {
       const { records } = await session.run(
-        `MATCH (s:Statement) WHERE ${clauses.join(" AND ")} RETURN s ORDER BY s.recordedAt`,
+        `${match}${where} RETURN s ORDER BY s.recordedAt`,
         params,
       );
       return records.map(toStatement);

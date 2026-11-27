@@ -9,6 +9,8 @@ import { JobWorker } from "../../src/jobs/worker.js";
 import { EpisodeStore } from "../../src/memory/episodeStore.js";
 import { Neo4jEpisodeReader } from "../../src/memory/episodeReader.js";
 import { Neo4jStatementStore } from "../../src/memory/statementStore.js";
+import { Neo4jResolutionStore } from "../../src/memory/resolutionStore.js";
+import { EntityResolutionService } from "../../src/resolution/service.js";
 import { ExtractionService } from "../../src/extraction/extractEpisode.js";
 import { ExtractionJobHandler } from "../../src/extraction/extractionJobHandler.js";
 import { EXTRACTION_PROMPT_HASH } from "../../src/extraction/prompt.js";
@@ -383,4 +385,53 @@ test("activeAt filters persisted statements on valid time and recorded time", as
 
   const recorded = await statements.activeAt({ asOfTx: new Date("2026-11-19T00:00:00.000Z") });
   assert.equal(recorded.filter((s) => s.id === rows[0]!.id).length, 1, "recorded before the as-of");
+});
+
+test("subject query paths agree after resolution re-points SUBJECT", async () => {
+  const text = "We should use Postgres for the new service.";
+  const episodeId = "ep-int-resolved-subject";
+  await createEpisode(episodeId, text);
+
+  const resolvedId = "ent-resolved-we";
+  const seed = newSession(ctx.driver, "WRITE");
+  try {
+    await seed.run(
+      `MERGE (e:Entity {id: $id})
+       ON CREATE SET e.type = 'concept', e.canonicalName = 'We', e.aliases = [],
+                     e.status = 'active', e.createdAt = datetime(), e.updatedAt = datetime()`,
+      { id: resolvedId },
+    );
+  } finally {
+    await seed.close();
+  }
+
+  const statements = new Neo4jStatementStore(ctx.driver);
+  const resolutions = new Neo4jResolutionStore(ctx.driver);
+  const handler = new ExtractionJobHandler<ManagedTransaction>({
+    episodes: new Neo4jEpisodeReader(new EpisodeStore(ctx.driver)),
+    extractor: new ExtractionService({ provider: providerFor([candidateFor(text)]), timeoutMs: 0 }),
+    statements,
+    resolver: new EntityResolutionService(resolutions),
+    resolutions,
+  });
+  const ledger = new JobLedger(ctx.driver, { leaseSeconds: 120, sweepIntervalMs: 30_000 });
+  const worker = new JobWorker<ManagedTransaction>(ledger, [handler], {
+    workerId: "w-resolved-subject", leaseRenewMs: 0, idleDelayMs: 0,
+  });
+  await ledger.enqueue("extract", { episodeId }, "int:resolved-subject", { maxAttempts: 1 });
+  assert.equal(await worker.runOnce(), "completed");
+
+  const rows = await statementsFor(episodeId);
+  assert.equal(rows.length, 1);
+  const statement = rows[0]!;
+  const mentionScopedId = String(statement.subjectId);
+
+  // The immutable property still records the original extraction mention.
+  assert.notEqual(mentionScopedId, resolvedId);
+  const viaForSubject = await statements.forSubject(resolvedId);
+  const viaActiveAt = await statements.activeAt({ subjectId: resolvedId });
+  assert.deepEqual(viaForSubject.map((s) => s.id), [statement.id]);
+  assert.deepEqual(viaActiveAt.map((s) => s.id), [statement.id]);
+  assert.deepEqual(await statements.forSubject(mentionScopedId), [], "old mention id no longer owns the statement");
+  assert.deepEqual(await statements.activeAt({ subjectId: mentionScopedId }), []);
 });
