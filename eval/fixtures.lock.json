@@ -52,6 +52,18 @@
     "extr-provider-timeout-then-retry.json": "c9a4060239839759448a7dfe4abddb52a740cf25761f69295e85064b02a6c00c",
     "extr-question-kept-as-question.json": "ce251b234f9c872c7804650afb3a265ffe485514b981e02b1938c4d3977ad952",
     "extr-relative-date-tokyo-monday.json": "0fab2f66cb7a6a90812f0a4beaa8a8b8d023bd78aea5f84100c1d80d08fba7db",
-    "extr-uncertainty-with-qualification.json": "cf92032872e8a30291a098380e60632261499838f422185d4c18beb3010cb314"
+    "extr-uncertainty-with-qualification.json": "cf92032872e8a30291a098380e60632261499838f422185d4c18beb3010cb314",
+    "tmp-bounded-validity-expired.json": "56d1bc2035e04f349d27f2c44095ff7410c4243fe2e167549bfb97a74aed590a",
+    "tmp-bounded-validity-inside.json": "53ea3e9c5119e52bc55a070c905ac0e7f9eec581bdc3d7d550772628cf648f7a",
+    "tmp-correction-appends-events.json": "03c414b6422d296f54cfe00cd024a200623ee37317199ec754f8be848fe5cbb9",
+    "tmp-fact-valid-from-future.json": "44e551cf524de28fd7711404a1818ecdccdef2deb01c31611dc585c030b96823",
+    "tmp-historical-after-correction.json": "a03fb52ad35c8146f549fcc55ddb2585c78597576166238e7380c5b6461e4476",
+    "tmp-historical-before-correction.json": "29f9c548b5cfaa6b2e6aa9e88e3b9a3870797749fa287c84b9a1bf007e80b821",
+    "tmp-independent-valid-and-tx-filters.json": "2ef5ee2ebc42e11ad2920a38a92cdbe0dc88970313fce7240d8975c8fa27c78e",
+    "tmp-missing-temporal-information.json": "70af71fb6e03fd88d8b93ba6300efc5e83a5e439d556a7dfb0baeec0c6309152",
+    "tmp-repeated-correction-execution.json": "1c5f6f243dc6440aab0a3367bec6d347ebacc29352402ffb7cdcdcb22eba00e6",
+    "tmp-retraction-without-replacement.json": "30587dcca25f8a8e92b671b1b552e1ca6ffb653d83da14a110507d2450d68716",
+    "tmp-stale-worker-commits-nothing.json": "8b5eb59c14a9743c983d8012bb81e6ace6577f68355c6e0c63b4be80526c6a04",
+    "tmp-two-conflicting-statements.json": "5817c33c37d88ecbe21d82d7ae2721b9de1ce26178022872918f20e37f4e3284"
   }
 }

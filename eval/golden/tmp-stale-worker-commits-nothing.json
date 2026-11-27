@@ -1,0 +1,39 @@
+{
+  "id": "tmp-stale-worker-commits-nothing",
+  "title": "A stale worker cannot commit a correction",
+  "kind": "adversarial",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "staleFence": true,
+    "statements": [
+      {
+        "id": "st-original",
+        "predicate": "considering",
+        "objectValue": "Attio",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "retract",
+      "targetId": "st-original",
+      "expectedFingerprint": "$target",
+      "reason": "should not be applied"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "rejected" },
+    { "path": "outcomes.0", "op": "eq", "value": "stale" },
+    { "path": "counts.events", "op": "eq", "value": 0 },
+    { "path": "counts.retractEdges", "op": "eq", "value": 0 },
+    { "path": "counts.statements", "op": "eq", "value": 1 },
+    { "path": "counts.queryStatements", "op": "eq", "value": 1 }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "Losing the fence rolls back the staged lifecycle event and leaves the original statement active.",
+  "slice": 5
+}

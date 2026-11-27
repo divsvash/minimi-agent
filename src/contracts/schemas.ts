@@ -33,7 +33,7 @@ export const EpistemicStatusSchema = z.enum([
 ]);
 export const AssertedBySchema = z.enum(["user", "assistant", "extraction", "external_verification"]);
 export const ValiditySchema = z.enum(["bounded", "open_ended", "ongoing"]);
-export const StatementStatusSchema = z.enum(["active", "superseded", "retracted", "contested"]);
+export const StatementStatusSchema = z.enum(["active", "superseded", "retracted", "contested", "conflicted"]);
 export const EvidenceKindSchema = z.enum(["episode_span", "external_url", "document"]);
 export const CaptureOutcomeSchema = z.enum(["ok", "http_error", "timeout", "parse_error", "blocked"]);
 export const ExtractionMethodSchema = z.enum(["api", "selector", "structured_llm", "manual"]);
@@ -411,3 +411,76 @@ export const ResolutionOutcomeSchema = z.object({
   recordedAt: isoDateTime,
 });
 export type ResolutionOutcome = z.infer<typeof ResolutionOutcomeSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Slice 5: temporal semantics and corrections
+ * ------------------------------------------------------------------ */
+
+export const LifecycleEventKindSchema = z.enum([
+  "superseded", "retracted", "conflicted", "resolution_contested",
+]);
+
+/** Immutable audit record. Status is derived from these, never written onto content. */
+export const LifecycleEventSchema = z.object({
+  id: z.string().min(1),
+  kind: LifecycleEventKindSchema,
+  targetId: z.string().min(1),
+  replacementId: z.string().optional(),
+  otherId: z.string().optional(),
+  at: isoDateTime,
+  actor: z.string().min(1),
+  reason: z.string().min(1),
+  jobId: z.string().optional(),
+  claimGeneration: z.number().int().nonnegative().optional(),
+  planHash: z.string().min(1),
+});
+export type LifecycleEvent = z.infer<typeof LifecycleEventSchema>;
+
+export const AsOfSchema = z.object({
+  asOfValid: nullableIso.optional(),
+  asOfTx: nullableIso.optional(),
+  tz: z.string().min(1).optional(),
+});
+export type AsOf = z.infer<typeof AsOfSchema>;
+
+/** Deterministic correction intent. The fingerprint guards against wrong targets. */
+export const CorrectionPlanSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("supersede"),
+    targetId: z.string().min(1),
+    expectedFingerprint: z.string().min(1),
+    /** A validated StatementWrite; validated again by the service. */
+    replacement: z.unknown(),
+    reason: z.string().min(1),
+    actor: z.string().min(1).default("user"),
+  }),
+  z.object({
+    kind: z.literal("retract"),
+    targetId: z.string().min(1),
+    expectedFingerprint: z.string().min(1),
+    reason: z.string().min(1),
+    actor: z.string().min(1).default("user"),
+  }),
+  z.object({
+    kind: z.literal("conflict"),
+    targetId: z.string().min(1),
+    otherId: z.string().min(1),
+    expectedFingerprint: z.string().min(1),
+    otherFingerprint: z.string().min(1),
+    reason: z.string().min(1),
+    actor: z.string().min(1).default("user"),
+  }),
+]);
+export type CorrectionPlan = z.infer<typeof CorrectionPlanSchema>;
+
+export const CorrectionResultSchema = z.object({
+  kind: z.enum(["supersede", "retract", "conflict"]),
+  status: z.enum(["applied", "already_applied"]),
+  eventIds: z.array(z.string()),
+  targetId: z.string(),
+  replacementId: z.string().optional(),
+  otherId: z.string().optional(),
+  planHash: z.string(),
+  recordedAt: isoDateTime,
+});
+export type CorrectionResult = z.infer<typeof CorrectionResultSchema>;

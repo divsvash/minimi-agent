@@ -1,3 +1,4 @@
+import { ids } from "../core/ids.js";
 import type { Entity, Statement } from "../contracts/schemas.js";
 
 /**
@@ -27,6 +28,11 @@ export function immutableStatementContent(statement: Omit<Statement, "status">):
     statement.timePrecision,
     statement.validity,
   ];
+}
+
+/** The same hash Neo4j stores as `Statement.contentHash` and checks on retries. */
+export function statementContentHash(statement: Omit<Statement, "status">): string {
+  return ids.sha256(JSON.stringify(immutableStatementContent(statement)));
 }
 
 /** Canonical entity content, excluding `createdAt`/`updatedAt` first-write metadata. */

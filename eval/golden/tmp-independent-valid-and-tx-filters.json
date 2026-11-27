@@ -1,0 +1,42 @@
+{
+  "id": "tmp-independent-valid-and-tx-filters",
+  "title": "Valid-time and transaction-time filters compose independently",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "query",
+    "statements": [
+      {
+        "id": "st-a",
+        "predicate": "true_later",
+        "objectValue": "yes",
+        "recordedAt": "2026-11-01T00:00:00.000Z",
+        "validFrom": "2026-11-10T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      },
+      {
+        "id": "st-b",
+        "predicate": "known_later",
+        "objectValue": "yes",
+        "recordedAt": "2026-11-15T00:00:00.000Z",
+        "validFrom": "2026-11-01T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "query": {
+      "asOfValid": "2026-11-12T00:00:00.000Z",
+      "asOfTx": "2026-11-10T00:00:00.000Z"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 1 },
+    { "path": "queryResult.0.id", "op": "eq", "value": "st-a" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "st-a was true but not yet recorded-later; st-b was recorded too late. Only one statement satisfies both axes.",
+  "slice": 5
+}

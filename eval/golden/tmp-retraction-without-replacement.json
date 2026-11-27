@@ -1,0 +1,38 @@
+{
+  "id": "tmp-retraction-without-replacement",
+  "title": "Retraction removes the claim from current queries without deleting history",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "statements": [
+      {
+        "id": "st-retracted",
+        "predicate": "claimed",
+        "objectValue": "free forever",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "retract",
+      "targetId": "st-retracted",
+      "expectedFingerprint": "$target",
+      "reason": "claim was unsupported"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.events", "op": "eq", "value": 1 },
+    { "path": "counts.retractEdges", "op": "eq", "value": 1 },
+    { "path": "counts.statements", "op": "eq", "value": 1 },
+    { "path": "counts.queryStatements", "op": "eq", "value": 0 },
+    { "path": "statements.0.status", "op": "eq", "value": "retracted" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "Retraction implies no replacement; the original statement is preserved and excluded from current results.",
+  "slice": 5
+}

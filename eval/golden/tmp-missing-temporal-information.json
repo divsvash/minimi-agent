@@ -1,0 +1,31 @@
+{
+  "id": "tmp-missing-temporal-information",
+  "title": "Missing valid-time information is never invented",
+  "kind": "adversarial",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "query",
+    "statements": [
+      {
+        "id": "st-unknown",
+        "predicate": "unclear",
+        "objectValue": "yes",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": null,
+        "validTo": null,
+        "timePrecision": "unknown",
+        "validity": "open_ended"
+      }
+    ],
+    "query": { "asOfValid": "2026-11-05T00:00:00.000Z" }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 1 },
+    { "path": "queryResult.0.id", "op": "eq", "value": "st-unknown" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "A null validFrom means unknown start (unbounded), not epoch or now; the statement remains visible.",
+  "slice": 5
+}

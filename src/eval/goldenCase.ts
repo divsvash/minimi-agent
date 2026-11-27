@@ -18,6 +18,9 @@ export const GoldenMetricSchema = z.enum([
   // an unauthorized MERGED_INTO is counted as critical, not a ranking error.
   "entity_resolution",
   "false_merge",
+  // Slice 5 correction/bitemporal cases, reported separately from the older
+  // timezone/date tags that also use `temporal_correctness`.
+  "correction_temporal_correctness",
 ]);
 export type GoldenMetric = z.infer<typeof GoldenMetricSchema>;
 

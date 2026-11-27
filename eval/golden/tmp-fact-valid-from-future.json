@@ -1,0 +1,30 @@
+{
+  "id": "tmp-fact-valid-from-future",
+  "title": "A statement whose valid time starts in the future is not visible before then",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "query",
+    "statements": [
+      {
+        "id": "st-future",
+        "predicate": "shortlisted",
+        "objectValue": "Attio",
+        "recordedAt": "2026-11-01T00:00:00.000Z",
+        "validFrom": "2026-12-01T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "query": { "asOfValid": "2026-11-15T00:00:00.000Z" }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 0 },
+    { "path": "counts.statements", "op": "eq", "value": 1 }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "A future valid-time start is honoured; the statement is recorded but not yet true in the world.",
+  "slice": 5
+}

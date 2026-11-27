@@ -1,11 +1,12 @@
 import type { Driver, ManagedTransaction, Record as Neo4jRecord } from "neo4j-driver";
 import { newSession } from "../interfaces/neo4j.js";
 import { ConflictError, NotFoundError } from "../core/errors.js";
-import { ids } from "../core/ids.js";
 import type { Statement } from "../contracts/schemas.js";
-import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
+import type { ActiveAtFilter, LifecycleStore, StatementStore, StatementWrite } from "../contracts/ports.js";
 import { validateStatementWrite } from "./validateStatementWrite.js";
-import { immutableStatementContent } from "./statementContent.js";
+import { statementContentHash } from "./statementContent.js";
+import { statementValidAt } from "../temporal/intervals.js";
+import { visibleAt } from "../temporal/projection.js";
 
 const asIso = (v: unknown): string | null => {
   if (v === null || v === undefined) return null;
@@ -55,11 +56,14 @@ function toStatement(r: Neo4jRecord): Statement {
 }
 
 function contentHash(statement: Omit<Statement, "status">): string {
-  return ids.sha256(JSON.stringify(immutableStatementContent(statement)));
+  return statementContentHash(statement);
 }
 
 export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
-  constructor(private readonly driver: Driver) {}
+  constructor(
+    private readonly driver: Driver,
+    private readonly lifecycle?: LifecycleStore<ManagedTransaction>,
+  ) {}
 
   async byId(id: string): Promise<Statement | null> {
     const session = newSession(this.driver, "READ");
@@ -86,26 +90,14 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
   }
 
   /**
-   * Slice 3 implements the conservative valid-time/recorded-time subset only.
-   * Lifecycle-event-driven transaction time is Slice 5; no caller may infer
-   * full bitemporal semantics from this method yet.
+   * Bitemporal query: valid time and transaction time are independent axes.
+   * Status is a projection of the append-only lifecycle events, never a stored
+   * assertion about history. Subject filtering stays relationship-based so it
+   * agrees with forSubject() after Slice 4 resolution.
    */
   async activeAt(filter: ActiveAtFilter): Promise<Statement[]> {
-    const clauses = ["coalesce(s.status, 'active') = 'active'"];
+    const clauses: string[] = [];
     const params: Record<string, unknown> = {};
-    if (filter.asOfValid) {
-      clauses.push(
-        "(s.validFrom IS NULL OR s.validFrom <= datetime($asOfValid)) AND (s.validTo IS NULL OR s.validTo > datetime($asOfValid))",
-      );
-      params.asOfValid = filter.asOfValid.toISOString();
-    }
-    if (filter.asOfTx) {
-      clauses.push("s.recordedAt <= datetime($asOfTx)");
-      params.asOfTx = filter.asOfTx.toISOString();
-    }
-    // Subject filtering follows the SUBJECT relationship, not the immutable
-    // `s.subjectId` property (which Slice 4 deliberately leaves as extracted).
-    // This keeps activeAt() and forSubject() in agreement after resolution.
     if (filter.subjectId) params.subjectId = filter.subjectId;
     if (filter.predicate) {
       clauses.push("s.predicate = $predicate");
@@ -120,15 +112,20 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
       : "MATCH (s:Statement)";
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
     const session = newSession(this.driver, "READ");
+    let statements: Statement[];
     try {
-      const { records } = await session.run(
-        `${match}${where} RETURN s ORDER BY s.recordedAt`,
-        params,
-      );
-      return records.map(toStatement);
+      const { records } = await session.run(`${match}${where} RETURN s ORDER BY s.recordedAt`, params);
+      statements = records.map(toStatement);
     } finally {
       await session.close();
     }
+    const events = this.lifecycle ? await this.lifecycle.events() : [];
+    const txCutoff = filter.asOfTx ? filter.asOfTx.getTime() : null;
+    return statements.filter((s) => {
+      if (filter.asOfValid && !statementValidAt(s, filter.asOfValid)) return false;
+      if (txCutoff !== null && new Date(s.recordedAt).getTime() > txCutoff) return false;
+      return visibleAt(s.id, events, filter.asOfTx);
+    });
   }
 
   async insert(tx: ManagedTransaction, write: StatementWrite): Promise<Statement> {

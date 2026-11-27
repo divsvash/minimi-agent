@@ -10,7 +10,7 @@
 import type {
   Entity, EntityType, Episode, EpisodeRole, Evidence, Job, Observation, Statement,
   MergeEvent, SplitEvent, ResolutionOutcome, ResolutionDecision, ResolutionRequest,
-  MergePlan, SplitPlan, ScoredCandidate,
+  MergePlan, SplitPlan, ScoredCandidate, LifecycleEvent,
 } from "./schemas.js";
 
 export interface EpisodeStore {
@@ -103,6 +103,18 @@ export interface StatementStore<TX extends object = object> {
    * The same statement id with different immutable content is a ConflictError.
    */
   insert(tx: TX, write: StatementWrite): Promise<Statement>;
+}
+
+/**
+ * Append-only lifecycle history (ADR-004). Every mutation takes the caller's
+ * fenced transaction handle; the Statement `status` property is a projection
+ * derived from these events, never an authoritative input.
+ */
+export interface LifecycleStore<TX extends object = object> {
+  events(): Promise<LifecycleEvent[]>;
+  event(id: string): Promise<LifecycleEvent | null>;
+  putEvent(tx: TX, event: LifecycleEvent): Promise<void>;
+  edges(): Promise<{ kind: string; from: string; to: string }[]>;
 }
 
 export interface ObservationStore {

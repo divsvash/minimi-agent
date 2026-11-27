@@ -1,8 +1,10 @@
 import { ConflictError } from "../core/errors.js";
 import type { Entity, Evidence, Statement } from "../contracts/schemas.js";
-import type { ActiveAtFilter, StatementStore, StatementWrite } from "../contracts/ports.js";
+import type { ActiveAtFilter, LifecycleStore, StatementStore, StatementWrite } from "../contracts/ports.js";
 import { validateStatementWrite } from "../memory/validateStatementWrite.js";
 import { immutableEntityContent, immutableStatementContent } from "../memory/statementContent.js";
+import { statementValidAt } from "../temporal/intervals.js";
+import { visibleAt } from "../temporal/projection.js";
 import { isMemoryTransaction, type Snapshottable } from "./memoryTransaction.js";
 
 interface StoreState {
@@ -14,11 +16,7 @@ interface StoreState {
   subjectByStatement: Map<string, string>;
 }
 
-/**
- * Offline StatementStore with the same observable append-only/idempotent
- * semantics as Neo4j for Slice 3. It is not a temporal engine: `activeAt`
- * implements only the conservative valid/recorded-time subset used by Slice 3.
- */
+/** Offline StatementStore with the same observable semantics as Neo4j. */
 export class InMemoryStatementStore implements StatementStore<object>, Snapshottable {
   private readonly statements = new Map<string, Statement>();
   private readonly evidence = new Map<string, Evidence>();
@@ -26,6 +24,8 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
   /** Mirrors Neo4j's `(s)-[:SUPPORTED_BY]->(e)` edge so provenance is queryable offline. */
   private readonly evidenceByStatement = new Map<string, string[]>();
   private readonly subjectByStatement = new Map<string, string>();
+
+  constructor(private readonly lifecycle?: LifecycleStore<object>) {}
 
   /** Live (committed) state, read by every query method. */
   private liveState(): StoreState {
@@ -99,19 +99,15 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
   }
 
   async activeAt(filter: ActiveAtFilter): Promise<Statement[]> {
+    const events = this.lifecycle ? await this.lifecycle.events() : [];
+    const txCutoff = filter.asOfTx ? filter.asOfTx.getTime() : null;
     return this.sortedStatements()
-      .filter((s) => (s.status ?? "active") === "active")
-      .filter((s) => {
-        if (!filter.asOfValid) return true;
-        const t = filter.asOfValid.getTime();
-        const from = s.validFrom ? new Date(s.validFrom).getTime() : null;
-        const to = s.validTo ? new Date(s.validTo).getTime() : null;
-        return (from === null || from <= t) && (to === null || to > t);
-      })
-      .filter((s) => !filter.asOfTx || new Date(s.recordedAt).getTime() <= filter.asOfTx.getTime())
+      .filter((s) => !filter.asOfValid || statementValidAt(s, filter.asOfValid))
+      .filter((s) => txCutoff === null || new Date(s.recordedAt).getTime() <= txCutoff)
       .filter((s) => !filter.subjectId || this.subjectFor(s.id, s) === filter.subjectId)
       .filter((s) => !filter.predicate || s.predicate === filter.predicate)
       .filter((s) => !filter.modality || s.modality === filter.modality)
+      .filter((s) => visibleAt(s.id, events, filter.asOfTx))
       .map((s) => structuredClone(s));
   }
 

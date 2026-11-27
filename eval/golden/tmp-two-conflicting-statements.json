@@ -1,0 +1,50 @@
+{
+  "id": "tmp-two-conflicting-statements",
+  "title": "Two conflicting assertions are both preserved and surfaced",
+  "kind": "adversarial",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "statements": [
+      {
+        "id": "st-a",
+        "predicate": "priced",
+        "objectValue": "20",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      },
+      {
+        "id": "st-b",
+        "predicate": "priced",
+        "objectValue": "50",
+        "recordedAt": "2026-11-04T00:00:00.000Z",
+        "validFrom": "2026-11-04T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "conflict",
+      "targetId": "st-a",
+      "otherId": "st-b",
+      "expectedFingerprint": "$target",
+      "otherFingerprint": "$other",
+      "reason": "sources disagree"
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.events", "op": "eq", "value": 2 },
+    { "path": "counts.conflictEdges", "op": "eq", "value": 1 },
+    { "path": "counts.queryStatements", "op": "eq", "value": 2 },
+    { "path": "counts.statements", "op": "eq", "value": 2 },
+    { "path": "statements.0.status", "op": "eq", "value": "conflicted" },
+    { "path": "statements.1.status", "op": "eq", "value": "conflicted" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "A conflict is surfaced, not silently resolved: both claims stay queryable and carry a conflicted projection.",
+  "slice": 5
+}

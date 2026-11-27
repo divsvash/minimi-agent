@@ -4,6 +4,7 @@ import { EpisodeSchema, type Episode } from "../contracts/schemas.js";
 import { InMemoryEpisodeStore } from "../fakes/memoryEpisodeStore.js";
 import { extractionEpisodeHandler } from "./extractionSut.js";
 import { entityResolutionHandler } from "./entityResolutionSut.js";
+import { temporalCorrectionHandler } from "./temporalCorrectionSut.js";
 import type { SutRegistry } from "./harness.js";
 
 /**
@@ -70,4 +71,10 @@ export const sutRegistry: SutRegistry = {
    * explicit operations with audit events. Scripted vectors are not semantics.
    */
   "entity.resolve": entityResolutionHandler,
+
+  /**
+   * Slice 5 bitemporal queries and append-only corrections. Real correction
+   * service + worker over deterministic fakes; no model or semantic claim.
+   */
+  "temporal.correction": temporalCorrectionHandler,
 };

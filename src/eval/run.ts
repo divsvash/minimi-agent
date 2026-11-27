@@ -67,6 +67,7 @@ export function formatReport(report: EvalReport): string {
   lines.push(`cases: ${m.total} total | executed=${m.executed} (pass=${m.passed}, fail=${m.failed}) | pending=${m.pending}`);
   lines.push(`historical recall correctness: ${pct(m.recallCorrectness)}`);
   lines.push(`temporal correctness:          ${pct(m.temporalCorrectness)}`);
+  lines.push(`correction temporal correctness: ${pct(m.correctionTemporalCorrectness)}`);
   lines.push(`citation coverage:             ${pct(m.citationCoverage)}`);
   lines.push(`false-unchanged violations:    ${m.falseUnchangedViolations} (must be 0)`);
   lines.push(`false merges (critical):       ${m.falseMergeViolations} (must be 0)`);

@@ -1,0 +1,31 @@
+{
+  "id": "tmp-bounded-validity-inside",
+  "title": "A bounded validity interval includes an instant inside it",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "query",
+    "statements": [
+      {
+        "id": "st-bounded",
+        "predicate": "was_priced",
+        "objectValue": "20",
+        "recordedAt": "2026-11-01T00:00:00.000Z",
+        "validFrom": "2026-11-01T00:00:00.000Z",
+        "validTo": "2026-11-10T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "bounded"
+      }
+    ],
+    "query": { "asOfValid": "2026-11-05T00:00:00.000Z" }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 1 },
+    { "path": "queryResult.0.id", "op": "eq", "value": "st-bounded" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "Half-open [validFrom, validTo) includes 5 November.",
+  "slice": 5
+}

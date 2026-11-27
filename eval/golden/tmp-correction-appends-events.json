@@ -1,0 +1,47 @@
+{
+  "id": "tmp-correction-appends-events",
+  "title": "A correction after the original appends an event and keeps both statements",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "statements": [
+      {
+        "id": "st-original",
+        "predicate": "considering",
+        "objectValue": "Attio",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "supersede",
+      "targetId": "st-original",
+      "expectedFingerprint": "$target",
+      "reason": "selected another CRM",
+      "replacement": {
+        "id": "st-new",
+        "predicate": "selected",
+        "objectValue": "HubSpot",
+        "recordedAt": "2026-11-20T00:00:00.000Z",
+        "validFrom": "2026-11-08T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.events", "op": "eq", "value": 1 },
+    { "path": "counts.supersedeEdges", "op": "eq", "value": 1 },
+    { "path": "counts.statements", "op": "eq", "value": 2 },
+    { "path": "queryResult.0.id", "op": "eq", "value": "st-new" },
+    { "path": "statements.0.status", "op": "eq", "value": "superseded" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "The original statement remains with immutable content; the replacement is current and a SUPERSEDES edge records the transition.",
+  "slice": 5
+}

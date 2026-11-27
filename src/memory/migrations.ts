@@ -46,4 +46,11 @@ export const MIGRATIONS: { id: string; cypher: string[] }[] = [
       "CREATE CONSTRAINT resolution_outcome_id IF NOT EXISTS FOR (o:ResolutionOutcome) REQUIRE o.id IS UNIQUE",
     ],
   },
+  {
+    id: "0005_lifecycle_events",
+    cypher: [
+      "CREATE CONSTRAINT lifecycle_event_id IF NOT EXISTS FOR (e:LifecycleEvent) REQUIRE e.id IS UNIQUE",
+      "CREATE INDEX lifecycle_event_at IF NOT EXISTS FOR (e:LifecycleEvent) ON (e.at)",
+    ],
+  },
 ];

@@ -1,0 +1,45 @@
+{
+  "id": "tmp-historical-after-correction",
+  "title": "A transaction-time query after the correction sees the replacement",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "statements": [
+      {
+        "id": "st-original",
+        "predicate": "considering",
+        "objectValue": "Attio",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "supersede",
+      "targetId": "st-original",
+      "expectedFingerprint": "$target",
+      "reason": "decision changed",
+      "replacement": {
+        "id": "st-new",
+        "predicate": "selected",
+        "objectValue": "HubSpot",
+        "recordedAt": "2026-11-20T00:00:00.000Z",
+        "validFrom": "2026-11-08T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    },
+    "query": { "asOfTx": "2026-11-21T00:00:00.000Z" }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 1 },
+    { "path": "queryResult.0.id", "op": "eq", "value": "st-new" }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "After the correction was recorded, the replacement is the statement the system believed.",
+  "slice": 5
+}

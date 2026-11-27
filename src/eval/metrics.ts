@@ -67,6 +67,8 @@ export interface EvalMetrics {
    * reported separately from ordinary ranking/case failures. Target is ALWAYS 0.
    */
   falseMergeViolations: number;
+  /** Fraction of EXECUTED cases tagged correction_temporal_correctness that pass. */
+  correctionTemporalCorrectness: number | null;
   /** Executed (non-pending) cases' latency distribution. */
   latencyMs: LatencyStats;
   /** Sum of recorded provider costs. See CostSummary.basis before treating this as measured. */
@@ -101,6 +103,7 @@ export function computeMetrics(results: CaseResult[]): EvalMetrics {
     falseMergeViolations: executed.filter(
       (r) => r.metrics.includes("false_merge") && r.assertions.some(failedSafetyAssertion),
     ).length,
+    correctionTemporalCorrectness: passRate(results, "correction_temporal_correctness"),
     latencyMs: {
       p50: pctl(latencies, 50),
       p95: pctl(latencies, 95),

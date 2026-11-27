@@ -1,0 +1,30 @@
+{
+  "id": "tmp-bounded-validity-expired",
+  "title": "A bounded validity interval excludes an instant after its end",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "query",
+    "statements": [
+      {
+        "id": "st-bounded",
+        "predicate": "was_priced",
+        "objectValue": "20",
+        "recordedAt": "2026-11-01T00:00:00.000Z",
+        "validFrom": "2026-11-01T00:00:00.000Z",
+        "validTo": "2026-11-10T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "bounded"
+      }
+    ],
+    "query": { "asOfValid": "2026-11-15T00:00:00.000Z" }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "counts.queryStatements", "op": "eq", "value": 0 }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "The upper bound is exclusive; the statement no longer applies after 10 November.",
+  "slice": 5
+}

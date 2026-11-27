@@ -1,0 +1,47 @@
+{
+  "id": "tmp-repeated-correction-execution",
+  "title": "Repeated identical correction jobs are idempotent",
+  "kind": "scenario",
+  "sut": "temporal.correction",
+  "input": {
+    "mode": "correct",
+    "repeats": 3,
+    "statements": [
+      {
+        "id": "st-original",
+        "predicate": "considering",
+        "objectValue": "Attio",
+        "recordedAt": "2026-11-03T00:00:00.000Z",
+        "validFrom": "2026-11-03T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    ],
+    "correction": {
+      "kind": "supersede",
+      "targetId": "st-original",
+      "expectedFingerprint": "$target",
+      "reason": "decision changed",
+      "replacement": {
+        "id": "st-new",
+        "predicate": "selected",
+        "objectValue": "HubSpot",
+        "recordedAt": "2026-11-20T00:00:00.000Z",
+        "validFrom": "2026-11-08T00:00:00.000Z",
+        "timePrecision": "day",
+        "validity": "open_ended"
+      }
+    }
+  },
+  "expect": [
+    { "path": "status", "op": "eq", "value": "ok" },
+    { "path": "outcomes.length", "op": "eq", "value": 3 },
+    { "path": "counts.events", "op": "eq", "value": 1 },
+    { "path": "counts.supersedeEdges", "op": "eq", "value": 1 },
+    { "path": "counts.statements", "op": "eq", "value": 2 }
+  ],
+  "metrics": ["correction_temporal_correctness"],
+  "noChangeTrap": false,
+  "rationale": "Three identical correction jobs produce one event and one SUPERSEDES edge.",
+  "slice": 5
+}
