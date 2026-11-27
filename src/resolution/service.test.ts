@@ -234,6 +234,54 @@ test("subject query paths agree on the resolved entity, not the mention-scoped i
   assert.equal((await statements.byId(statement.id))!.subjectId, mentionScopedId, "immutable property is unchanged");
 });
 
+test("an identical retry after resolution keeps exactly one SUBJECT relationship", async () => {
+  const clock = fixedClock(new Date(AT));
+  const TEXT = "We should use Postgres for the new service.";
+  const episode: Episode = {
+    id: "ep-retry-resolved", externalId: "ext-retry-resolved", sessionId: "sess", seq: 0,
+    role: "user", text: TEXT, occurredAt: "2026-11-16T09:00:00.000Z",
+    precision: "second", tz: "UTC", source: "chat", createdAt: "2026-11-16T09:00:00.000Z",
+  };
+  const provider = new FakeLLMProvider(() => ({
+    text: JSON.stringify({ candidates: [{
+      subject: { name: "We" }, predicate: "should use",
+      object: { kind: "entity", name: "Postgres", type: "product" },
+      polarity: "positive", modality: "proposed", decisionStatus: "proposed", confidence: 0.8,
+      evidence: { quote: TEXT, spanStart: 0, spanEnd: TEXT.length },
+    }] }),
+    model: "fake-llm-1", usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop",
+  }));
+  const statements = new InMemoryStatementStore();
+  const store = new InMemoryResolutionStore(statements, clock);
+  await store.putEntity({}, entity({ id: "ent-we", type: "concept", canonicalName: "We" }));
+  const handler = new ExtractionJobHandler<object>({
+    episodes: { byId: async () => episode },
+    extractor: new ExtractionService({ provider, clock, timeoutMs: 0 }),
+    statements,
+    resolver: new EntityResolutionService(store, { clock }),
+    resolutions: store,
+    clock,
+  });
+  const ledger = new InMemoryJobLedger();
+  const worker = new JobWorker<object>(ledger, [handler], { workerId: "w", leaseRenewMs: 0, idleDelayMs: 0 });
+  ledger.enqueue("extract", { episodeId: episode.id }, "extract:retry-1", { maxAttempts: 1 });
+  ledger.enqueue("extract", { episodeId: episode.id }, "extract:retry-2", { maxAttempts: 1 });
+
+  assert.equal(await worker.runOnce(), "completed");
+  assert.equal(await worker.runOnce(), "completed");
+  assert.equal(statements.size, 1);
+
+  const statement = statements.allStatements()[0]!;
+  const edges = statements.subjectEdges();
+  assert.equal(edges.size, 1, "the retry must not recreate the original SUBJECT edge");
+  assert.equal(edges.get(statement.id), "ent-we");
+  assert.deepEqual((await statements.forSubject("ent-we")).map((s) => s.id), [statement.id]);
+  assert.deepEqual((await statements.activeAt({ subjectId: "ent-we" })).map((s) => s.id), [statement.id]);
+  assert.deepEqual(await statements.forSubject(statement.subjectId), []);
+  assert.deepEqual(await statements.activeAt({ subjectId: statement.subjectId }), []);
+  assert.equal((await statements.byId(statement.id))!.subjectId, statement.subjectId, "immutable property unchanged");
+});
+
 test("a new_entity decision persists its generated id and re-points the statement", async () => {
   const clock = fixedClock(new Date(AT));
   const TEXT = "We should use Postgres for the new service.";

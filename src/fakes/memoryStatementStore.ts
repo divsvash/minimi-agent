@@ -87,6 +87,11 @@ export class InMemoryStatementStore implements StatementStore<object>, Snapshott
     return this.subjectByStatement.get(statementId) ?? statement.subjectId;
   }
 
+  /** Inspection hook: the current SUBJECT edges (statement id → entity id). */
+  subjectEdges(): ReadonlyMap<string, string> {
+    return new Map(this.subjectByStatement);
+  }
+
   /** Used by resolution/split inside the caller's fence to re-point SUBJECT. */
   setSubjectEdgeIn(tx: object, statementId: string, entityId: string): void {
     const state = isMemoryTransaction(tx) ? tx.workingCopy<StoreState>(this) : this.liveState();

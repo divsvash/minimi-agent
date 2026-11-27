@@ -424,6 +424,24 @@ test("subject query paths agree after resolution re-points SUBJECT", async () =>
   const rows = await statementsFor(episodeId);
   assert.equal(rows.length, 1);
   const statement = rows[0]!;
+
+  // An identical retry must not recreate the SUBJECT edge that resolution moved.
+  await ledger.enqueue("extract", { episodeId }, "int:resolved-subject-retry", { maxAttempts: 1 });
+  assert.equal(await worker.runOnce(), "completed");
+  assert.equal(
+    await count(`MATCH (s:Statement {id: $id})-[r:SUBJECT]->(:Entity) RETURN count(r) AS n`, { id: statement.id }),
+    1,
+    "exactly one SUBJECT relationship survives the retry",
+  );
+  assert.equal(
+    await count(
+      `MATCH (s:Statement {id: $id})-[:SUBJECT]->(:Entity {id: $resolved}) RETURN count(s) AS n`,
+      { id: statement.id, resolved: resolvedId },
+    ),
+    1,
+    "that relationship points to the resolved entity",
+  );
+
   const mentionScopedId = String(statement.subjectId);
 
   // The immutable property still records the original extraction mention.

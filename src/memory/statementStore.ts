@@ -194,14 +194,23 @@ export class Neo4jStatementStore implements StatementStore<ManagedTransaction> {
       throw new ConflictError(`statement ${statement.id} already exists with different immutable content`);
     }
 
+    // First-write relationship only. Slice 4 resolution may re-point SUBJECT to
+    // the resolved entity; re-creating the original edge on an identical retry
+    // would leave two owners. The immutable s.subjectId property is untouched.
     await tx.run(
-      `MATCH (s:Statement {id: $id}), (subj:Entity {id: $subjectId})
+      `MATCH (s:Statement {id: $id})
+       WHERE NOT (s)-[:SUBJECT]->()
+       WITH s
+       MATCH (subj:Entity {id: $subjectId})
        MERGE (s)-[:SUBJECT]->(subj)`,
       { id: statement.id, subjectId: statement.subjectId },
     );
     if (statement.objectKind === "entity" && statement.objectId) {
       await tx.run(
-        `MATCH (s:Statement {id: $id}), (obj:Entity {id: $objectId})
+        `MATCH (s:Statement {id: $id})
+         WHERE NOT (s)-[:OBJECT]->()
+         WITH s
+         MATCH (obj:Entity {id: $objectId})
          MERGE (s)-[:OBJECT]->(obj)`,
         { id: statement.id, objectId: statement.objectId },
       );
